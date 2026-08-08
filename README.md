@@ -68,11 +68,18 @@ bundle, not from your shell.
 ## Install
 
 **[Download Nocturne 1.1.1](https://github.com/dotcomjack/nocturne/releases/latest)**,
-unzip, drag to Applications, open it.
+open the disk image, drag it to Applications.
+
+Or with Homebrew:
+
+```sh
+brew install --cask dotcomjack/tap/nocturne
+```
 
 Signed with a Developer ID and notarized by Apple, so it opens on a double click
-with no right-click-to-open dance and no Gatekeeper warning. Universal, Apple
-silicon and Intel.
+with no right-click-to-open dance and no Gatekeeper warning. The disk image is
+notarized and stapled too, not just the app inside it. Universal, Apple silicon
+and Intel.
 
 Or build it yourself, which is the point of it being MIT:
 
