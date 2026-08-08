@@ -33,19 +33,16 @@ enum ClockWindowLocator {
     /// Tolerance when matching a window's top edge to a screen's top edge.
     private static let topEdgeSlop: CGFloat = 3
 
-    /// Clock rects in Cocoa screen coordinates, one per menu bar, ready to hand
-    /// to `NSWindow`.
-    static func rects() -> [CGRect] {
+    /// Control Center's menu bar windows, bucketed by which screen's bar they
+    /// are sitting in. Bucketing matters on a multi display setup, where two
+    /// bars are present at once.
+    private static func itemsByScreen() -> [Int: [CGRect]] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return []
+            return [:]
         }
 
-        // Bucket Control Center's menu bar windows by which screen's bar they
-        // are sitting in, then take the right-most in each. Bucketing matters on
-        // a multi display setup, where two bars are present at once.
         var byScreen: [Int: [CGRect]] = [:]
-
         for window in raw {
             guard window[kCGWindowOwnerName as String] as? String == ownerName,
                   let boundsValue = window[kCGWindowBounds as String] as? NSDictionary,
@@ -56,19 +53,38 @@ enum ClockWindowLocator {
 
             byScreen[screenIndex, default: []].append(rect)
         }
+        return byScreen
+    }
 
-        return byScreen.values
+    /// Clock rects in Cocoa screen coordinates, one per menu bar, ready to hand
+    /// to `NSWindow`.
+    static func rects() -> [CGRect] {
+        itemsByScreen().values
             .compactMap { $0.max(by: { $0.maxX < $1.maxX }) }
             .map(cocoaRect(fromQuartz:))
     }
 
-    /// The full menu bar strip on every screen, in Cocoa coordinates.
+    /// The full menu bar strip, but only on screens that currently *have* a
+    /// menu bar showing.
     ///
-    /// Derived from `NSScreen` rather than from the window list, because the
-    /// Window Server's own menu bar window is identified by its *name*, and the
-    /// name field is the TCC-gated one.
+    /// The geometry itself comes from `NSScreen`, because the Window Server's
+    /// own menu bar window is identified by its name and the name field is the
+    /// TCC-gated one. But `NSScreen` always reports every screen, whether or not
+    /// a bar is drawn on it. Deriving the rects from `NSScreen` alone therefore
+    /// never returns empty, the caller's teardown guard never fires, and the
+    /// strip stays put in full screen: a solid band across the top of whatever
+    /// video you are watching.
+    ///
+    /// So gate on the same signal the clock path uses. If Control Center is not
+    /// drawing items into a screen's bar, that bar is hidden, and there is
+    /// nothing there to cover.
     static func menuBarRects() -> [CGRect] {
-        NSScreen.screens.map { screen in
+        let populated = Set(itemsByScreen().keys)
+        let screens = NSScreen.screens
+
+        return populated.compactMap { index in
+            guard index < screens.count else { return nil }
+            let screen = screens[index]
             let height = barHeight(for: screen)
             return CGRect(x: screen.frame.minX,
                           y: screen.frame.maxY - height,

@@ -190,7 +190,10 @@ final class NocturneController: ObservableObject {
     /// so someone who deliberately ran an analog clock keeps it.
     func restoreSystemClock() {
         overlay.deactivate()
-        ClockDefaults.set(.isAnalog, originalClock?.isAnalog ?? false)
+        // Confirmed rather than fire-and-forget: this runs on the quit path,
+        // where the process is about to exit and a lost write means the user is
+        // left with an analog clock and no app to undo it.
+        ClockDefaults.setAndConfirm(.isAnalog, originalClock?.isAnalog ?? false)
         ControlCenter.reload()
     }
 
