@@ -77,7 +77,23 @@ final class OverlayController {
         didSet { guard coverage != oldValue else { return }; rebuild() }
     }
 
+    /// Where Nocturne's own status item is, in Cocoa coordinates, and which
+    /// glyph it is currently showing.
+    ///
+    /// Blanking the whole bar hides the one control that turns it back on,
+    /// which leaves someone hunting a menu bar they cannot see. So the glyph is
+    /// redrawn on top of the strip.
+    ///
+    /// Cutting a hole in the strip instead was the first attempt and looked
+    /// worse: the hole exposes the real bar, which is lighter than the strip,
+    /// so the icon sat in a visibly paler rectangle. Drawing over the top keeps
+    /// the bar uniform. Supplied as a closure because the item moves whenever
+    /// the bar reflows.
+    var beacon: (() -> (frame: CGRect, symbol: String)?)?
+
     private var windows: [NSWindow] = []
+    private var beaconWindow: NSWindow?
+    private var currentBeaconSymbol: String?
     private var tracker: Timer?
     private(set) var isActive = false
 
@@ -129,8 +145,10 @@ final class OverlayController {
     private func sync() {
         let rects: [CGRect]
         switch coverage {
-        case .clock:     rects = ClockWindowLocator.rects()
-        case .entireBar: rects = ClockWindowLocator.menuBarRects()
+        case .clock:
+            rects = ClockWindowLocator.rects()
+        case .entireBar:
+            rects = ClockWindowLocator.menuBarRects()
         }
 
         guard !rects.isEmpty else {
@@ -150,6 +168,76 @@ final class OverlayController {
         for window in windows where !window.isVisible {
             window.orderFrontRegardless()
         }
+
+        syncBeacon()
+    }
+
+    // MARK: - Beacon
+
+    /// Redraws our own glyph above the strip so the way out stays visible.
+    ///
+    /// Only for `.entireBar`. In `.clock` coverage the bar is untouched and the
+    /// real status item is already showing.
+    private func syncBeacon() {
+        guard coverage == .entireBar, !windows.isEmpty, let spec = beacon?() else {
+            beaconWindow?.orderOut(nil)
+            beaconWindow = nil
+            return
+        }
+
+        let window = beaconWindow ?? makeBeaconWindow()
+        beaconWindow = window
+
+        if let view = window.contentView as? NSImageView, currentBeaconSymbol != spec.symbol {
+            view.image = Self.beaconImage(named: spec.symbol)
+            currentBeaconSymbol = spec.symbol
+        }
+        if window.frame != spec.frame {
+            window.setFrame(spec.frame, display: false)
+        }
+        if !window.isVisible {
+            window.orderFrontRegardless()
+        }
+    }
+
+    private func makeBeaconWindow() -> NSWindow {
+        let window = NSWindow(contentRect: .zero, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        // One above the strip, so it draws over it. Clicks still fall through
+        // to the real status item underneath.
+        window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 2)
+        window.ignoresMouseEvents = true
+        window.isOpaque = false
+        window.hasShadow = false
+        window.backgroundColor = .clear
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+
+        let view = NSImageView()
+        view.imageScaling = .scaleProportionallyDown
+        window.contentView = view
+        return window
+    }
+
+    /// The glyph, tinted to read against the strip rather than against the bar.
+    private static func beaconImage(named symbol: String) -> NSImage? {
+        guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Nocturne")
+                ?? NSImage(systemSymbolName: "moon.fill", accessibilityDescription: "Nocturne")
+        else { return nil }
+
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        let sized = image.withSymbolConfiguration(config) ?? image
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let tint = isDark ? NSColor.white : NSColor.black
+
+        let tinted = NSImage(size: sized.size, flipped: false) { rect in
+            sized.draw(in: rect)
+            tint.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        tinted.isTemplate = false
+        return tinted
     }
 
     private func rebuild() {
@@ -161,6 +249,9 @@ final class OverlayController {
     private func teardown() {
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
+        beaconWindow?.orderOut(nil)
+        beaconWindow = nil
+        currentBeaconSymbol = nil
     }
 
     // MARK: - Window construction

@@ -24,6 +24,14 @@ final class MenuBarController: NSObject {
         refreshIcon()
     }
 
+    /// Where our own icon currently sits, in Cocoa screen coordinates.
+    ///
+    /// Read live rather than cached, because the menu bar reflows whenever an
+    /// item appears or a display is attached.
+    var statusItemFrame: CGRect? {
+        statusItem.button?.window?.frame
+    }
+
     // MARK: - Icon
 
     func refreshIcon() {
