@@ -67,7 +67,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.0.8](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.1.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
 unzip, drag to Applications, open it.
 
 Signed with a Developer ID and notarized by Apple, so it opens on a double click
@@ -101,7 +101,8 @@ Four modes:
 
 Settings also exposes the same switches as System Settings under Menu Bar and
 Clock Options, so you can drop just the date, just the day, or just AM/PM without
-touching a mode. Those are real, and each one is measured:
+touching a mode. The menu bar icon can shimmer on a timer, off by choice, with a
+700ms sweep top to bottom. Those are real, and each one is measured:
 
 Each row below **adds to the one above it**, it is a ladder rather than four
 independent settings:

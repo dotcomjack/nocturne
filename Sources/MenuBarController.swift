@@ -12,6 +12,11 @@ final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private let controller = NocturneController.shared
     private let menu = NSMenu()
+    private var shimmer: ShimmerAnimator?
+
+    /// The resting glyph, kept so a sweep can put it back afterwards.
+    private var restingImage: NSImage?
+    private var currentSymbol: String?
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -22,6 +27,21 @@ final class MenuBarController: NSObject {
         statusItem.button?.toolTip = "Nocturne"
 
         refreshIcon()
+
+        shimmer = ShimmerAnimator(
+            currentSymbol: { [weak self] in self?.currentSymbol },
+            apply: { [weak self] image in
+                guard let self else { return }
+                self.statusItem.button?.image = image ?? self.restingImage
+            })
+        shimmer?.setCadence(controller.shimmerCadence)
+    }
+
+    /// Preview a sweep immediately, so changing the setting shows what it does.
+    func previewShimmer() { shimmer?.sweep() }
+
+    func applyShimmerCadence(_ cadence: ShimmerCadence) {
+        shimmer?.setCadence(cadence)
     }
 
     /// Where our own icon currently sits, in Cocoa screen coordinates.
@@ -48,6 +68,11 @@ final class MenuBarController: NSObject {
         image?.isTemplate = true
         button.image = image
         button.toolTip = "Nocturne, \(mode.title)"
+
+        // Remember the resting state so a sweep has something to return to,
+        // and drop the shimmer's cached frames if the glyph changed.
+        restingImage = image
+        currentSymbol = mode.symbolName
     }
 
     // MARK: - Menu
