@@ -1,3 +1,4 @@
+// █ dcj · dotcomjack.com · MIT
 import AppKit
 
 /// Draws an opaque strip over Control Center's clock.

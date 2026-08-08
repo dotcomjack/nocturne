@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# █ dcj · dotcomjack.com · MIT
 #
 # Cuts a signed, notarized, stapled release of Nocturne.
 #

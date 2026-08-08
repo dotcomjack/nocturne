@@ -1,3 +1,4 @@
+// █ dcj · dotcomjack.com · MIT
 import AppKit
 
 /// Nocturne's own menu bar item.
