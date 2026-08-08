@@ -100,7 +100,15 @@ final class OverlayController {
     // MARK: - Lifecycle
 
     func activate() {
-        guard !isActive else { return }
+        // Already running means re-place, not ignore.
+        //
+        // The 2s tracker tears the strip down whenever it ticks while Control
+        // Center is restarting, which is a ~500ms window it lands in roughly one
+        // time in four. Recovery is supposed to come from the settle-wait
+        // callback calling activate() again, but an early return made that
+        // callback inert: the strip then stayed down until the next tick, so
+        // Hide everything showed the whole menu bar for up to 2 seconds.
+        guard !isActive else { sync(); return }
         isActive = true
 
         // The menu bar reflows on its own schedule, so poll rather than trust a

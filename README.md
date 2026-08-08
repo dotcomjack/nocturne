@@ -67,7 +67,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.0.5](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.0.6](https://github.com/dotcomjack/nocturne/releases/latest)**,
 unzip, drag to Applications, open it.
 
 Signed with a Developer ID and notarized by Apple, so it opens on a double click
@@ -165,8 +165,14 @@ looks cleanest.
 
 **Nocturne adopts your existing Clock Options the first time it runs.** It reads
 whatever you already had set in System Settings and starts from there, rather
-than imposing its own defaults on you. It also snapshots that original state, so
-Settings can put every clock setting back exactly as it was.
+than imposing its own defaults on you. It also snapshots that state, so Settings
+can put your Clock Options back as they were.
+
+One honest caveat: restoring always lands on a **digital** clock. If you were
+already running the analog menu bar clock before installing Nocturne, you get a
+digital one back. That is deliberate, because Nocturne's own preferences can be
+cleared while the clock is analog, and treating that as "original" would restore
+you to analog permanently.
 
 On its own, Nocturne changes exactly one key: `IsAnalog`. It only writes the
 other four when you move a switch in its Settings window yourself.

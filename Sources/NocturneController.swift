@@ -238,8 +238,14 @@ final class NocturneController: ObservableObject {
 
     /// Undoes the one thing Nocturne does on its own: the analog swap.
     ///
-    /// Restores the user's *original* `IsAnalog` rather than hardcoding digital,
-    /// so someone who deliberately ran an analog clock keeps it.
+    /// This always lands on a digital clock, and that is deliberate rather than
+    /// an oversight. The snapshot forces `isAnalog` to false at capture time
+    /// (see `adoptSystemClockSettingsOnFirstRun`), because our own preferences
+    /// can be cleared while the clock is analog, and recording that as
+    /// "original" would make Restore put the clock back to analog forever.
+    ///
+    /// The cost is real and worth stating: someone who deliberately ran the
+    /// analog clock before installing Nocturne gets a digital one back.
     func restoreSystemClock() {
         overlay.deactivate()
         // Confirmed rather than fire-and-forget: this runs on the quit path,
