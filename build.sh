@@ -17,17 +17,24 @@ echo "==> Generating project"
 xcodegen generate
 
 echo "==> Building (Release)"
+# Capture the real exit status. Piping into grep would report grep's status, so
+# a failed build would sail through and install a stale binary while printing
+# "Installed".
+set +e
 xcodebuild \
   -project Nocturne.xcodeproj \
   -scheme Nocturne \
   -configuration Release \
   -derivedDataPath build \
-  build \
-  | grep -E "error:|warning: [A-Z]|BUILD" || true
+  build > build.log 2>&1
+BUILD_STATUS=$?
+set -e
+grep -E "error:|BUILD" build.log || true
+[ "$BUILD_STATUS" -eq 0 ] || { echo "BUILD FAILED, see build.log" >&2; exit 1; }
 
 APP="build/Build/Products/Release/Nocturne.app"
-if [ ! -d "$APP" ]; then
-  echo "Build did not produce $APP" >&2
+if [ ! -x "$APP/Contents/MacOS/Nocturne" ]; then
+  echo "Build did not produce an executable in $APP" >&2
   exit 1
 fi
 

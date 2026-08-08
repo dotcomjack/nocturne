@@ -68,6 +68,27 @@ enum ClockDefaults {
         DateVisibility(rawValue: int(.showDate, fallback: 0)) ?? .whenSpaceAllows
     }
 
+    /// Whatever the user's clock looked like before Nocturne touched it.
+    struct Snapshot: Codable, Sendable {
+        var isAnalog: Bool
+        var showDayOfWeek: Bool
+        var showAMPM: Bool
+        var showSeconds: Bool
+        var showDate: Int
+    }
+
+    /// Reads the live system values.
+    ///
+    /// The fallbacks match what macOS itself shows when a key is absent, so a
+    /// user who has never opened Clock Options still snapshots correctly.
+    static func snapshot() -> Snapshot {
+        Snapshot(isAnalog: bool(.isAnalog, fallback: false),
+                 showDayOfWeek: bool(.showDayOfWeek, fallback: true),
+                 showAMPM: bool(.showAMPM, fallback: true),
+                 showSeconds: bool(.showSeconds, fallback: false),
+                 showDate: int(.showDate, fallback: 0))
+    }
+
     // MARK: - Writing
 
     /// Writes the key without applying it.
@@ -103,9 +124,5 @@ enum ControlCenter {
         }
     }
 
-    /// True once Control Center has repopulated the menu bar after a reload.
-    static var isReady: Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty
-            && !ClockWindowLocator.rects().isEmpty
-    }
+
 }

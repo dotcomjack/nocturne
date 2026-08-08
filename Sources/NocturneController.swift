@@ -6,18 +6,33 @@ import SwiftUI
 /// Owns Nocturne's state and is the only thing that writes to the system.
 ///
 /// Everything funnels through `apply()` so there is exactly one place where the
-/// clock's on-screen state is decided. Each `apply()` costs one Control Center
-/// restart, which is why the writes are batched rather than fired per toggle.
+/// clock's on-screen state is decided.
 @MainActor
 final class NocturneController: ObservableObject {
 
     static let shared = NocturneController()
 
+    /// Fires whenever `mode` changes so the menu bar glyph can follow it.
+    ///
+    /// A callback rather than `objectWillChange`: `@AppStorage` inside an
+    /// `ObservableObject` does not reliably publish, so subscribing to it would
+    /// leave the icon showing a different mode than the menu's checkmark.
+    var onModeChange: (() -> Void)?
+
     // MARK: - Persisted state
 
     @AppStorage("mode") var mode: ClockMode = .blind {
-        didSet { guard mode != oldValue else { return }; apply() }
+        didSet {
+            guard mode != oldValue else { return }
+            // Remember the last real mode wherever it was chosen, not just in
+            // toggle(), so clicking the icon always returns to what you picked.
+            if mode != .off { preferredMode = mode }
+            apply()
+            onModeChange?()
+        }
     }
+
+    @AppStorage("preferredMode") private var preferredMode: ClockMode = .blind
 
     @AppStorage("overlayFill") var overlayFill: OverlayController.Fill = .material {
         didSet { overlay.fill = overlayFill }
@@ -25,41 +40,122 @@ final class NocturneController: ObservableObject {
 
     // Clock Options passthrough. These mirror the System Settings pane, so a
     // user who only wants to lose the date never has to touch a mode.
-    @AppStorage("showDayOfWeek") var showDayOfWeek = true { didSet { applyClockOptions() } }
-    @AppStorage("showAMPM")      var showAMPM      = true { didSet { applyClockOptions() } }
-    @AppStorage("showSeconds")   var showSeconds   = false { didSet { applyClockOptions() } }
+    @AppStorage("showDayOfWeek") var showDayOfWeek = true { didSet { clockOptionsChanged() } }
+    @AppStorage("showAMPM")      var showAMPM      = true { didSet { clockOptionsChanged() } }
+    @AppStorage("showSeconds")   var showSeconds   = false { didSet { clockOptionsChanged() } }
     @AppStorage("dateVisibility") var dateVisibility: ClockDefaults.DateVisibility = .whenSpaceAllows {
-        didSet { applyClockOptions() }
+        didSet { clockOptionsChanged() }
     }
 
     let overlay = OverlayController()
 
+    /// Guards against a stale `waitForControlCenter` callback activating the
+    /// overlay after the mode has already moved on.
+    private var applyGeneration = 0
+
     private init() {
+        Self.adoptSystemClockSettingsOnFirstRun()
         overlay.fill = overlayFill
+    }
+
+    // MARK: - First run
+
+    /// On first run, take the user's existing Clock Options as our starting
+    /// values instead of imposing our own.
+    ///
+    /// Without this, first launch silently overwrites whatever the user had set
+    /// in System Settings with this file's hardcoded defaults. Measured on a
+    /// real machine before the fix: a user with 24-hour time, no day of week and
+    /// seconds showing had all three flipped (`ShowAMPM` 0 to 1,
+    /// `ShowDayOfWeek` 0 to 1, `ShowSeconds` 1 to 0) the moment the app opened.
+    ///
+    /// Writes go straight to `UserDefaults` rather than through the `@AppStorage`
+    /// properties on purpose: assigning to those fires their `didSet`, which
+    /// would push our values back out to the system and reintroduce the very bug
+    /// this is fixing.
+    private static func adoptSystemClockSettingsOnFirstRun() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "hasAdoptedSystemClock") else { return }
+
+        var current = ClockDefaults.snapshot()
+
+        // If our own preferences were cleared while Nocturne had the clock
+        // analog (a reinstall after `defaults delete`, a migrated account), the
+        // analog state is ours, not the user's. Recording it as "original" would
+        // make "Restore clock to how it was" restore to analog, permanently.
+        current.isAnalog = false
+
+        defaults.set(current.showDayOfWeek, forKey: "showDayOfWeek")
+        defaults.set(current.showAMPM, forKey: "showAMPM")
+        defaults.set(current.showSeconds, forKey: "showSeconds")
+        defaults.set(current.showDate, forKey: "dateVisibility")
+
+        if let encoded = try? JSONEncoder().encode(current) {
+            defaults.set(encoded, forKey: "originalClock")
+        }
+        defaults.set(true, forKey: "hasAdoptedSystemClock")
+    }
+
+    /// The clock exactly as it was before Nocturne ever ran, if we captured it.
+    private var originalClock: ClockDefaults.Snapshot? {
+        guard let data = UserDefaults.standard.data(forKey: "originalClock") else { return nil }
+        return try? JSONDecoder().decode(ClockDefaults.Snapshot.self, from: data)
     }
 
     // MARK: - Applying
 
     /// Brings the system in line with `mode`.
+    ///
+    /// Deliberately does **not** write Clock Options. Those are only written when
+    /// the user moves one of our switches. Writing them here would silently
+    /// revert any change the user made in System Settings, on every launch.
     func apply() {
-        ClockDefaults.set(.isAnalog, mode != .off)
-        writeClockOptions()
-        ControlCenter.reload()
+        applyGeneration &+= 1
+        let generation = applyGeneration
 
-        if mode == .gone {
+        let wantsAnalog = mode.wantsAnalogClock
+        let alreadyCorrect = ClockDefaults.bool(.isAnalog, fallback: false) == wantsAnalog
+
+        if !alreadyCorrect {
+            ClockDefaults.set(.isAnalog, wantsAnalog)
+            ControlCenter.reload()
+        }
+
+        guard mode.usesOverlay else {
+            overlay.deactivate()
+            return
+        }
+
+        overlay.coverage = (mode == .naked) ? .entireBar : .clock
+
+        if alreadyCorrect {
+            overlay.activate()
+        } else {
             // The rect only exists once Control Center has drawn again, so wait
             // for it rather than placing the strip against stale geometry.
-            waitForControlCenter { [weak self] in self?.overlay.activate() }
-        } else {
-            overlay.deactivate()
+            waitForControlCenter { [weak self] in
+                guard let self,
+                      self.applyGeneration == generation,
+                      self.mode.usesOverlay
+                else { return }
+                self.overlay.activate()
+            }
         }
     }
 
-    private func applyClockOptions() {
+    private func clockOptionsChanged() {
         writeClockOptions()
         ControlCenter.reload()
-        if mode == .gone {
-            waitForControlCenter { [weak self] in self?.overlay.activate() }
+        guard mode.usesOverlay else { return }
+
+        applyGeneration &+= 1
+        let generation = applyGeneration
+        waitForControlCenter { [weak self] in
+            guard let self,
+                  self.applyGeneration == generation,
+                  self.mode.usesOverlay
+            else { return }
+            self.overlay.activate()
         }
     }
 
@@ -86,27 +182,56 @@ final class NocturneController: ObservableObject {
         poll()
     }
 
-    /// Puts the clock back the way macOS ships it. Called on quit so the app
-    /// never leaves the menu bar in a state the user cannot undo without us.
+    // MARK: - Restoring
+
+    /// Undoes the one thing Nocturne does on its own: the analog swap.
+    ///
+    /// Restores the user's *original* `IsAnalog` rather than hardcoding digital,
+    /// so someone who deliberately ran an analog clock keeps it.
     func restoreSystemClock() {
         overlay.deactivate()
-        ClockDefaults.set(.isAnalog, false)
+        ClockDefaults.set(.isAnalog, originalClock?.isAnalog ?? false)
         ControlCenter.reload()
+    }
+
+    var canRestoreOriginalClock: Bool { originalClock != nil }
+
+    /// Puts every clock setting back exactly as it was before Nocturne first ran.
+    ///
+    /// Our own storage is written directly rather than through the properties,
+    /// because each `didSet` would otherwise trigger its own Control Center
+    /// restart. Control Center is a KeepAlive job with a one second throttle, so
+    /// six SIGKILLs in a row can leave the menu bar empty for several seconds.
+    /// One restart, at the end.
+    func restoreOriginalClock() {
+        guard let original = originalClock else { return }
+
+        overlay.deactivate()
+
+        let defaults = UserDefaults.standard
+        defaults.set(original.showDayOfWeek, forKey: "showDayOfWeek")
+        defaults.set(original.showAMPM, forKey: "showAMPM")
+        defaults.set(original.showSeconds, forKey: "showSeconds")
+        defaults.set(original.showDate, forKey: "dateVisibility")
+        defaults.set(ClockMode.off.rawValue, forKey: "mode")
+
+        ClockDefaults.set(.isAnalog, original.isAnalog)
+        ClockDefaults.set(.showDayOfWeek, original.showDayOfWeek)
+        ClockDefaults.set(.showAMPM, original.showAMPM)
+        ClockDefaults.set(.showSeconds, original.showSeconds)
+        ClockDefaults.set(.showDate, original.showDate)
+        ControlCenter.reload()
+
+        objectWillChange.send()
+        onModeChange?()
     }
 
     // MARK: - Convenience
 
-    /// What the menu bar icon click cycles between: whatever mode the user last
-    /// chose, and off. Toggling should never silently change their chosen mode.
-    @AppStorage("preferredMode") private var preferredMode: ClockMode = .blind
-
+    /// What clicking the menu bar icon cycles between: the mode you last chose,
+    /// and off.
     func toggle() {
-        if mode == .off {
-            mode = preferredMode
-        } else {
-            preferredMode = mode
-            mode = .off
-        }
+        mode = (mode == .off) ? preferredMode : .off
     }
 
     // MARK: - Launch at login

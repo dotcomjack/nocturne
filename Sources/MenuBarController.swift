@@ -2,9 +2,10 @@ import AppKit
 
 /// Nocturne's own menu bar item.
 ///
-/// Left click toggles between off and the last chosen mode, because the common
-/// case at 2am is "kill it now" and that should not cost a menu. Right click, or
-/// holding the button, opens the menu with the modes and settings in it.
+/// Left click opens the menu, which is what every other menu bar app on the
+/// system does. An earlier version made left click a silent toggle and hid the
+/// menu behind a right click; nobody found it, and an icon whose only affordance
+/// is invisible may as well not be there.
 @MainActor
 final class MenuBarController: NSObject {
 
@@ -16,11 +17,10 @@ final class MenuBarController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(buttonClicked(_:))
-        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-
         menu.delegate = self
+        statusItem.menu = menu
+        statusItem.button?.toolTip = "Nocturne"
+
         refreshIcon()
     }
 
@@ -29,29 +29,27 @@ final class MenuBarController: NSObject {
     func refreshIcon() {
         guard let button = statusItem.button else { return }
         let mode = controller.mode
-        button.image = NSImage(systemSymbolName: mode.symbolName,
-                               accessibilityDescription: "Nocturne: \(mode.title)")
-        button.image?.isTemplate = true
-        button.toolTip = "Nocturne \u{2014} \(mode.title)"
+
+        let image = NSImage(systemSymbolName: mode.symbolName,
+                            accessibilityDescription: "Nocturne, \(mode.title)")
+        // Fall back to a symbol that has existed since Big Sur. A nil image here
+        // would render an invisible menu bar item, which is worse than a plain
+        // glyph on an older macOS.
+            ?? NSImage(systemSymbolName: "clock", accessibilityDescription: "Nocturne")
+
+        image?.isTemplate = true
+        button.image = image
+        button.toolTip = "Nocturne, \(mode.title)"
     }
 
-    // MARK: - Interaction
-
-    @objc private func buttonClicked(_ sender: NSStatusBarButton) {
-        let isRightClick = NSApp.currentEvent?.type == .rightMouseUp
-
-        if isRightClick {
-            statusItem.menu = menu
-            statusItem.button?.performClick(nil)
-            statusItem.menu = nil
-        } else {
-            controller.toggle()
-            refreshIcon()
-        }
-    }
+    // MARK: - Menu
 
     private func rebuildMenu() {
         menu.removeAllItems()
+
+        let header = NSMenuItem(title: "Menu bar clock", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
 
         for mode in ClockMode.allCases {
             let item = NSMenuItem(title: mode.title,
@@ -60,7 +58,8 @@ final class MenuBarController: NSObject {
             item.target = self
             item.representedObject = mode
             item.state = (mode == controller.mode) ? .on : .off
-            if mode == .gone { item.toolTip = mode.detail }
+            item.toolTip = mode.detail
+            item.indentationLevel = 1
             menu.addItem(item)
         }
 
@@ -90,8 +89,8 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func quit() {
-        // Leaving someone's clock analog after they uninstalled the app that did
-        // it is the kind of thing that gets a utility distrusted.
+        // Leaving someone's clock analog after they quit the app that did it is
+        // the kind of thing that gets a utility distrusted.
         controller.restoreSystemClock()
         NSApp.terminate(nil)
     }

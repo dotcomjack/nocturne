@@ -3,33 +3,111 @@ import CoreGraphics
 
 /// Finds Control Center's clock on every attached display.
 ///
-/// This uses only `CGWindowListCopyWindowInfo`, which is public API and needs no
-/// Screen Recording permission as long as we read window *geometry* and never
-/// window *contents*. Asking for the image would trip the TCC prompt; asking for
-/// the rect does not.
+/// Uses only `CGWindowListCopyWindowInfo`, and deliberately reads **geometry
+/// only**. That distinction is the whole design:
 ///
-/// On a two display setup the list contains one `Clock` window per menu bar, so
-/// callers get an array and should cover all of them.
+/// - `kCGWindowBounds` is available to any process, no permission required.
+/// - `kCGWindowName` is gated behind Screen Recording (TCC).
+///
+/// An earlier version filtered on `kCGWindowName == "Clock"`. It appeared to
+/// work during development purely because the binary was launched from a
+/// terminal and inherited that terminal's Screen Recording grant. Launched
+/// normally as an app bundle, the name field came back nil for every window, so
+/// the locator returned nothing and Gone mode silently drew nothing at all.
+/// Measured on the same build, same machine:
+///
+///     launched as                 windows with a readable name    rects()
+///     bare binary from Terminal   10                              1
+///     .app via `open`              0                              0
+///
+/// So: identify the clock by where it sits, not by what it is called. The clock
+/// is the right-most item Control Center owns in a given menu bar, which is a
+/// position macOS does not let the user change.
 enum ClockWindowLocator {
 
     private static let ownerName = "Control Center"
-    private static let windowName = "Clock"
 
-    /// Clock rects in Cocoa screen coordinates, ready to hand to `NSWindow`.
+    /// Anything taller than this is not a menu bar item.
+    private static let maxMenuBarItemHeight: CGFloat = 60
+
+    /// Tolerance when matching a window's top edge to a screen's top edge.
+    private static let topEdgeSlop: CGFloat = 3
+
+    /// Clock rects in Cocoa screen coordinates, one per menu bar, ready to hand
+    /// to `NSWindow`.
     static func rects() -> [CGRect] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
 
-        return raw.compactMap { window -> CGRect? in
+        // Bucket Control Center's menu bar windows by which screen's bar they
+        // are sitting in, then take the right-most in each. Bucketing matters on
+        // a multi display setup, where two bars are present at once.
+        var byScreen: [Int: [CGRect]] = [:]
+
+        for window in raw {
             guard window[kCGWindowOwnerName as String] as? String == ownerName,
-                  window[kCGWindowName as String] as? String == windowName,
-                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
-                  let rect = CGRect(dictionaryRepresentation: bounds)
-            else { return nil }
-            return cocoaRect(fromQuartz: rect)
+                  let boundsValue = window[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: boundsValue),
+                  rect.height > 0, rect.height <= maxMenuBarItemHeight,
+                  let screenIndex = menuBarIndex(containing: rect)
+            else { continue }
+
+            byScreen[screenIndex, default: []].append(rect)
         }
+
+        return byScreen.values
+            .compactMap { $0.max(by: { $0.maxX < $1.maxX }) }
+            .map(cocoaRect(fromQuartz:))
+    }
+
+    /// The full menu bar strip on every screen, in Cocoa coordinates.
+    ///
+    /// Derived from `NSScreen` rather than from the window list, because the
+    /// Window Server's own menu bar window is identified by its *name*, and the
+    /// name field is the TCC-gated one.
+    static func menuBarRects() -> [CGRect] {
+        NSScreen.screens.map { screen in
+            let height = barHeight(for: screen)
+            return CGRect(x: screen.frame.minX,
+                          y: screen.frame.maxY - height,
+                          width: screen.frame.width,
+                          height: height)
+        }
+    }
+
+    /// Menu bar thickness for a screen.
+    ///
+    /// `frame.maxY - visibleFrame.maxY` is the honest measurement and accounts
+    /// for a notch, but it also swallows the Dock when the Dock is docked to the
+    /// top. `NSStatusBar.thickness` is the floor that keeps that case sane.
+    private static func barHeight(for screen: NSScreen) -> CGFloat {
+        let inset = screen.frame.maxY - screen.visibleFrame.maxY
+        let thickness = NSStatusBar.system.thickness
+        guard inset > 0 else { return thickness }
+        return min(max(inset, thickness), thickness * 2)
+    }
+
+    /// Which screen's menu bar this window is sitting in, if any.
+    ///
+    /// A menu bar item's top edge is flush with the top edge of its screen. That
+    /// is what separates a status item from Control Center's own popover panel,
+    /// which is also owned by "Control Center" but hangs below the bar.
+    private static func menuBarIndex(containing rect: CGRect) -> Int? {
+        for (index, screen) in NSScreen.screens.enumerated() {
+            let quartzTop = quartzTopEdge(of: screen)
+            guard abs(rect.minY - quartzTop) <= topEdgeSlop else { continue }
+            guard rect.midX >= screen.frame.minX, rect.midX <= screen.frame.maxX else { continue }
+            return index
+        }
+        return nil
+    }
+
+    /// A screen's top edge expressed in Quartz (top-left origin) coordinates.
+    private static func quartzTopEdge(of screen: NSScreen) -> CGFloat {
+        guard let primary = NSScreen.screens.first else { return 0 }
+        return primary.frame.maxY - screen.frame.maxY
     }
 
     /// Quartz window bounds use a top-left origin anchored to the primary
