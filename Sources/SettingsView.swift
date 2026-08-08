@@ -36,7 +36,7 @@ struct SettingsView: View {
                 .padding(20)
             }
         }
-        .frame(width: 430, height: 720)
+        .frame(width: 430, height: 880)   // tallest state is Gone plus the login warning
         // The user may have changed Clock Options in System Settings since we
         // last looked. Pull the live values in so the panel never lies.
         .onAppear {
@@ -147,12 +147,19 @@ struct SettingsView: View {
                 SwitchRow("Launch at login", isOn: $launchAtLogin)
                     .tint(accent)
                     .onChange(of: launchAtLogin) { _, newValue in
+                        // Snapping the switch back re-enters this handler, so
+                        // bail on that corrective pass. Without the guard the
+                        // second pass recomputed the warning flag to false, so
+                        // the "macOS is blocking this" row could never appear,
+                        // and worse, it called launchAtLogin = false again,
+                        // which unregisters a request that was merely pending
+                        // approval.
+                        guard newValue != (SMAppService.mainApp.status == .enabled) else { return }
+
                         controller.launchAtLogin = newValue
                         let actual = SMAppService.mainApp.status == .enabled
-                        // If macOS refused, the switch snaps back on its own.
-                        // Say why, instead of leaving it looking broken.
                         loginItemsBlocked = (newValue != actual)
-                        launchAtLogin = actual
+                        if launchAtLogin != actual { launchAtLogin = actual }
                     }
 
                 if loginItemsBlocked {

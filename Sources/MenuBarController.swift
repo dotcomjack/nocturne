@@ -97,9 +97,12 @@ final class MenuBarController: NSObject {
     }
 
     @objc private func quit() {
-        // Leaving someone's clock analog after they quit the app that did it is
-        // the kind of thing that gets a utility distrusted.
-        controller.restoreSystemClock()
+        // Do NOT restore here. `applicationWillTerminate` already does it for
+        // every NSApp.terminate path, and the signal handlers cover pkill.
+        // Calling it here too ran the restore twice, which force-killed Control
+        // Center a second time ~120ms later. That second kill lands on the
+        // freshly respawned process and trips launchd's 1s ThrottleInterval, so
+        // the whole menu bar stayed empty for ~1.8s instead of ~0.5s.
         NSApp.terminate(nil)
     }
 }
