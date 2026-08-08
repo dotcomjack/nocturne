@@ -43,7 +43,8 @@ struct SettingsView: View {
                 .padding(20)
             }
         }
-        .frame(width: 430, height: 880)   // tallest state is Gone plus the login warning
+        .frame(width: 430)
+        .frame(minHeight: 420, idealHeight: 880, maxHeight: .infinity)
         // Refresh on every show, not just the first.
         //
         // The Settings window is a singleton that is only ordered out when
@@ -351,8 +352,20 @@ final class SettingsWindow {
             let hosting = NSHostingController(rootView: SettingsView())
             let window = NSWindow(contentViewController: hosting)
             window.title = "Nocturne"
-            window.styleMask = [.titled, .closable]
+            // .resizable is load-bearing, not cosmetic. AppKit only clamps a
+            // window to the screen when it is resizable: measured, a 1232pt
+            // non-resizable window stayed 1232pt and hung 149pt below the
+            // screen, while the same window with .resizable was clamped to fit.
+            // Without it, the bottom of this panel is permanently unreachable on
+            // any Mac under ~912pt of usable height, which includes 1440x900.
+            window.styleMask = [.titled, .closable, .resizable]
             window.isReleasedWhenClosed = false
+            // Fit to the screen before centring, so a small display gets a
+            // shorter window with a working scroll view rather than a clipped one.
+            if let visible = NSScreen.main?.visibleFrame {
+                let target = min(880 + 32, visible.height)
+                window.setContentSize(NSSize(width: 430, height: target - 32))
+            }
             window.center()
             self.window = window
         }

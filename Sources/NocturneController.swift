@@ -309,6 +309,16 @@ final class NocturneController: ObservableObject {
         // cancels any overlay callback still in flight from a mode change made
         // moments earlier. Pressing Restore mid-restart used to leave the
         // overlay up with the mode already off.
+        // Write the analog key BEFORE flipping mode.
+        //
+        // `mode = .off` fires its didSet, which calls apply(), which restarts
+        // Control Center whenever the clock is currently analog, which is every
+        // Restore that has any work to do. Setting the key first means apply()
+        // sees it already correct and skips that restart, so this function keeps
+        // the single-restart promise its comment below makes. Control Center is
+        // a KeepAlive job with a 1s throttle, so stacked kills are expensive.
+        ClockDefaults.set(.isAnalog, original.isAnalog)
+
         mode = .off
         overlay.deactivate()
 

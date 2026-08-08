@@ -188,7 +188,7 @@ final class OverlayController {
         // so the glyph has to be real. Checking it after placing meant the
         // windows were created and then torn down on the same pass, which on a
         // repeating 2s tracker is a strip that flashes on and off forever.
-        if coverage == .entireBar, beacon?() != nil, !beaconIsReal {
+        if coverage == .entireBar, !beaconIsReal {
             teardown()
             return
         }
