@@ -8,3 +8,6 @@ DerivedData/
 
 # macOS
 .DS_Store
+
+# Release output from scripts/release.sh
+dist/
