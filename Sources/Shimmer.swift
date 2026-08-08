@@ -43,18 +43,23 @@ enum ShimmerCadence: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Sweeps a highlight down the menu bar icon.
+/// Sweeps an icy blue highlight down the menu bar icon.
 ///
-/// The frames are template images, so the band is expressed as **alpha**
-/// rather than colour. AppKit tints a template with whatever the menu bar
-/// currently needs, which means one set of frames reads correctly on a light
-/// bar and a dark one, and keeps working when the wallpaper changes underneath.
-/// Baking a colour in would have meant regenerating everything on every
-/// appearance change, and getting it wrong the moment the bar went translucent
-/// over something bright.
+/// The frames are **not** template images. A template is tinted wholesale by
+/// AppKit, which is exactly what you want for a static glyph and exactly what
+/// makes a coloured band impossible. So the frames carry their own colour: the
+/// glyph is painted in the menu bar's own text colour and the band in
+/// `Palette.icyDarkBlue`, and the resting glyph stays a template so it keeps
+/// adapting for free when nothing is sweeping.
 ///
-/// Frames are rendered once per symbol and cached, so a sweep is a sequence of
-/// pointer swaps rather than 24 redraws.
+/// Because the colour is baked in, frames are cached per glyph *and*
+/// appearance, and the cache is dropped when the appearance changes.
+///
+/// The frames are drawn from the resting image itself rather than re-derived
+/// from the symbol name. That is not a shortcut, it is the fix for a real bug:
+/// building them with `SymbolConfiguration(pointSize: 15)` produced glyphs 3pt
+/// wider and 2pt taller than the resting one, so the status item resized on
+/// every sweep and the icon visibly jumped.
 @MainActor
 final class ShimmerAnimator {
 
@@ -68,15 +73,8 @@ final class ShimmerAnimator {
     /// How much of the glyph the bright band covers, as a fraction of height.
     private static let bandHeight: CGFloat = 0.45
 
-    /// How far the band dips below full brightness.
-    ///
-    /// The band DIMS rather than brightens, which is what makes the sweep
-    /// seamless. A template's alpha caps at 1, so brightening a band means
-    /// dimming everything else, and then the whole icon visibly drops the
-    /// instant a sweep starts and snaps back when it ends. Dipping instead
-    /// means the first and last frames are identical to the resting glyph, so
-    /// the sweep begins and ends on nothing.
-    private static let bandAlpha: CGFloat = 0.42
+    /// Icy dark blue, the colour of the band.
+    static let icyDarkBlue = NSColor(srgbRed: 0.247, green: 0.529, blue: 0.702, alpha: 1)  // #3F87B3
 
     private var cache: [String: [NSImage]] = [:]
     private var sweepTimer: Timer?
@@ -85,11 +83,21 @@ final class ShimmerAnimator {
 
     /// Called with the image to show, or nil to restore the resting glyph.
     private let apply: (NSImage?) -> Void
-    /// The symbol currently in the menu bar.
+    /// The symbol currently in the menu bar, used only as a cache key.
     private let currentSymbol: () -> String?
+    /// The exact image the menu bar is showing at rest. Frames are drawn from
+    /// this so they cannot differ in size from it.
+    private let restingImage: () -> NSImage?
+    /// Whether the menu bar is currently dark.
+    private let isDark: () -> Bool
 
-    init(currentSymbol: @escaping () -> String?, apply: @escaping (NSImage?) -> Void) {
+    init(currentSymbol: @escaping () -> String?,
+         restingImage: @escaping () -> NSImage?,
+         isDark: @escaping () -> Bool,
+         apply: @escaping (NSImage?) -> Void) {
         self.currentSymbol = currentSymbol
+        self.restingImage = restingImage
+        self.isDark = isDark
         self.apply = apply
     }
 
@@ -125,9 +133,15 @@ final class ShimmerAnimator {
 
     // MARK: - The sweep
 
+    /// Drop cached frames, for when the appearance changes and the baked-in
+    /// colours are no longer right.
+    func invalidate() { cache.removeAll() }
+
     /// Run one sweep now, whatever the cadence. Used to preview a change.
     func sweep() {
-        guard let symbol = currentSymbol(), let frames = frames(for: symbol), !frames.isEmpty else { return }
+        guard let source = restingImage(), let symbol = currentSymbol(),
+              let frames = frames(for: source, symbol: symbol), !frames.isEmpty
+        else { return }
 
         stopSweep()
         frameIndex = 0
@@ -154,17 +168,21 @@ final class ShimmerAnimator {
 
     // MARK: - Frames
 
-    private func frames(for symbol: String) -> [NSImage]? {
-        if let cached = cache[symbol] { return cached }
-        guard let base = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) else { return nil }
+    private func frames(for source: NSImage, symbol: String) -> [NSImage]? {
+        let dark = isDark()
+        let key = "\(symbol)|\(dark)"
+        if let cached = cache[key] { return cached }
 
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-        let glyph = base.withSymbolConfiguration(config) ?? base
+        // The menu bar tints a template with its own text colour. Since these
+        // frames are not templates, resolve that colour ourselves.
+        let glyphColor: NSColor = dark ? .white : .black
 
         let built = (0..<Self.frameCount).map { index in
-            Self.frame(of: glyph, progress: CGFloat(index) / CGFloat(Self.frameCount - 1))
+            Self.frame(of: source,
+                       progress: CGFloat(index) / CGFloat(Self.frameCount - 1),
+                       glyphColor: glyphColor)
         }
-        cache[symbol] = built
+        cache[key] = built
         return built
     }
 
@@ -172,7 +190,7 @@ final class ShimmerAnimator {
     ///
     /// `progress` runs 0 (band above the glyph) to 1 (band below it), so the
     /// highlight enters and leaves rather than appearing and vanishing.
-    private static func frame(of glyph: NSImage, progress: CGFloat) -> NSImage {
+    private static func frame(of glyph: NSImage, progress: CGFloat, glyphColor: NSColor) -> NSImage {
         let size = glyph.size
 
         let image = NSImage(size: size, flipped: false) { rect in
@@ -188,16 +206,16 @@ final class ShimmerAnimator {
             let half = rect.height * bandHeight / 2
 
             let colors = [
-                NSColor(white: 1, alpha: 1).cgColor,
-                NSColor(white: 1, alpha: bandAlpha).cgColor,
-                NSColor(white: 1, alpha: 1).cgColor,
+                glyphColor.cgColor,
+                icyDarkBlue.cgColor,
+                glyphColor.cgColor,
             ] as CFArray
 
-            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceGray(),
+            guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
                                             colors: colors,
                                             locations: [0, 0.5, 1])
             else {
-                NSColor(white: 1, alpha: 1).setFill()
+                glyphColor.setFill()
                 rect.fill()
                 return true
             }
@@ -210,9 +228,9 @@ final class ShimmerAnimator {
             return true
         }
 
-        // Still a template, so AppKit keeps tinting it for whatever the menu
-        // bar needs. The band lives in the alpha channel.
-        image.isTemplate = true
+        // Deliberately NOT a template: a template would be repainted in a
+        // single colour and the blue would vanish.
+        image.isTemplate = false
         return image
     }
 }
