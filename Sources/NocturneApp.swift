@@ -29,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Hide everything blanks the bar, and our icon is the only way back,
         // so it gets redrawn on top of the strip.
+        NocturneController.shared.onShimmerChange = { [weak self] cadence in
+            self?.menuBar?.applyShimmerCadence(cadence)
+            // Show what the choice does the moment it is made.
+            if cadence != .off { self?.menuBar?.previewShimmer() }
+        }
+
         NocturneController.shared.overlay.beacon = { [weak self] in
             guard let frame = self?.menuBar?.statusItemFrame else { return nil }
             return (frame, NocturneController.shared.mode.symbolName)

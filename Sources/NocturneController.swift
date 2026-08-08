@@ -39,6 +39,14 @@ final class NocturneController: ObservableObject {
         didSet { overlay.fill = overlayFill }
     }
 
+    /// How often the menu bar icon sweeps. See `ShimmerCadence`.
+    @AppStorage("shimmerCadence") var shimmerCadence: ShimmerCadence = .occasionally {
+        didSet { guard shimmerCadence != oldValue else { return }; onShimmerChange?(shimmerCadence) }
+    }
+
+    /// Set by the app delegate so the menu bar item can follow the setting.
+    var onShimmerChange: ((ShimmerCadence) -> Void)?
+
     // Clock Options passthrough. These mirror the System Settings pane, so a
     // user who only wants to lose the date never has to touch a mode.
     @AppStorage("showDayOfWeek") var showDayOfWeek = true {

@@ -6,8 +6,23 @@ enum Palette {
     static let accent      = Color(red: 0.784, green: 0.639, blue: 0.400)  // #C8A366
     static let accentDeep  = Color(red: 0.549, green: 0.416, blue: 0.184)  // #8C6A2F
 
+    /// A touch deeper than the brand bronze, for small tracked text on a light
+    /// window.
+    ///
+    /// The brand accent #8C6A2F is specified against the web's #fbfaf8 paper.
+    /// macOS `windowBackgroundColor` is darker (about #ECECEC), and measured
+    /// there the same bronze lands at 4.21:1, under the 4.5:1 WCAG AA needs for
+    /// small text. This variant measures 4.93:1 on the same background. Dark
+    /// mode already passes comfortably at 7.05:1, so it is unchanged.
+    static let accentLabel = Color(red: 0.498, green: 0.376, blue: 0.161)  // #7F6029
+
     static func accent(for scheme: ColorScheme) -> Color {
         scheme == .dark ? accent : accentDeep
+    }
+
+    /// Accent for small tracked labels, which need more contrast than a border.
+    static func labelAccent(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? accent : accentLabel
     }
 }
 
@@ -19,6 +34,7 @@ struct SettingsView: View {
     @State private var loginItemsBlocked = false
 
     private var accent: Color { Palette.accent(for: scheme) }
+    private var labelAccent: Color { Palette.labelAccent(for: scheme) }
 
     /// Pull live system state into the panel.
     private func refresh() {
@@ -34,17 +50,24 @@ struct SettingsView: View {
             Divider().opacity(0.5)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 24) {
                     modeSection
-                    if controller.mode == .gone { goneSection }
+                    if controller.mode == .gone {
+                        goneSection
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    iconSection
                     clockOptionsSection
                     generalSection
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 22)
+                // Sections slide rather than pop when Gone appears or leaves.
+                .animation(.easeInOut(duration: 0.18), value: controller.mode)
             }
         }
         .frame(width: 430)
-        .frame(minHeight: 420, idealHeight: 880, maxHeight: .infinity)
         // Refresh on every show, not just the first.
         //
         // The Settings window is a singleton that is only ordered out when
@@ -85,14 +108,16 @@ struct SettingsView: View {
 
     private var modeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Mode", accent: accent)
+            SectionLabel("Mode", accent: labelAccent)
 
             VStack(spacing: 6) {
                 ForEach(ClockMode.allCases) { mode in
                     ModeRow(mode: mode,
                             isSelected: controller.mode == mode,
                             accent: accent) {
-                        controller.mode = mode
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            controller.mode = mode
+                        }
                     }
                 }
             }
@@ -103,7 +128,7 @@ struct SettingsView: View {
 
     private var goneSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Cover", accent: accent)
+            SectionLabel("Cover", accent: labelAccent)
 
             Picker("", selection: $controller.overlayFill) {
                 ForEach(OverlayController.Fill.allCases) { fill in
@@ -118,11 +143,38 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Menu bar icon
+
+    private var iconSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Menu bar icon", accent: labelAccent)
+
+            VStack(spacing: 0) {
+                Row {
+                    Text("Shimmer")
+                    Spacer(minLength: 0)
+                    Picker("", selection: $controller.shimmerCadence) {
+                        ForEach(ShimmerCadence.allCases) { cadence in
+                            Text(cadence.title).tag(cadence)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 168)
+                }
+            }
+            .tint(accent)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.09)))
+
+            Note(controller.shimmerCadence.detail)
+        }
+    }
+
     // MARK: - Clock options
 
     private var clockOptionsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Clock options", accent: accent)
+            SectionLabel("Clock options", accent: labelAccent)
 
             VStack(spacing: 0) {
                 Row {
@@ -147,7 +199,7 @@ struct SettingsView: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.09)))
 
-            Note("The same switches as System Settings \u{203A} Menu Bar \u{203A} Clock Options. Nocturne adopts whatever you already had the first time it runs. Changing one restarts Control Center, so the menu bar blinks once.")
+            Note("The same switches as System Settings \u{203A} Menu Bar \u{203A} Clock Options. Changing one restarts Control Center, so the menu bar blinks once.")
         }
     }
 
@@ -155,7 +207,7 @@ struct SettingsView: View {
 
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("General", accent: accent)
+            SectionLabel("General", accent: labelAccent)
 
             VStack(spacing: 0) {
                 SwitchRow("Launch at login", isOn: $launchAtLogin)
@@ -297,7 +349,7 @@ private struct ModeRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(isSelected ? accent.opacity(0.10)
@@ -360,12 +412,16 @@ final class SettingsWindow {
             // any Mac under ~912pt of usable height, which includes 1440x900.
             window.styleMask = [.titled, .closable, .resizable]
             window.isReleasedWhenClosed = false
-            // Fit to the screen before centring, so a small display gets a
-            // shorter window with a working scroll view rather than a clipped one.
-            if let visible = NSScreen.main?.visibleFrame {
-                let target = min(880 + 32, visible.height)
-                window.setContentSize(NSSize(width: 430, height: target - 32))
-            }
+            // Size to the content, then clamp to the screen.
+            //
+            // A fixed height is wrong in both directions: too tall and it leaves
+            // dead space under the last row, too short and the panel scrolls for
+            // no reason. Measuring the content gets both right, and the clamp
+            // keeps it usable on a small display, where the scroll view takes
+            // over.
+            let fitting = hosting.view.fittingSize
+            let usable = (NSScreen.main?.visibleFrame.height ?? 900) - 40
+            window.setContentSize(NSSize(width: 430, height: min(fitting.height, usable)))
             window.center()
             self.window = window
         }
