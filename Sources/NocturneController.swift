@@ -230,14 +230,28 @@ final class NocturneController: ObservableObject {
     func restoreOriginalClock() {
         guard let original = originalClock else { return }
 
+        // `mode` goes through the PROPERTY, never straight to UserDefaults.
+        //
+        // Writing the raw key leaves `@AppStorage`'s in-memory copy stale: disk
+        // said "off" while `self.mode` still read "blind". The menu then refused
+        // to re-select the mode you were just on, because `didSet`'s
+        // `mode != oldValue` guard saw no change and never called `apply()`.
+        // Reproduced: press Restore, then click Blind, and nothing happens.
+        //
+        // Going through the property also bumps `applyGeneration`, which
+        // cancels any overlay callback still in flight from a mode change made
+        // moments earlier. Pressing Restore mid-restart used to leave the
+        // overlay up with the mode already off.
+        mode = .off
         overlay.deactivate()
 
+        // These four are ours alone, so write them directly. Each has a `didSet`
+        // that would otherwise fire its own Control Center restart.
         let defaults = UserDefaults.standard
         defaults.set(original.showDayOfWeek, forKey: "showDayOfWeek")
         defaults.set(original.showAMPM, forKey: "showAMPM")
         defaults.set(original.showSeconds, forKey: "showSeconds")
         defaults.set(original.showDate, forKey: "dateVisibility")
-        defaults.set(ClockMode.off.rawValue, forKey: "mode")
 
         ClockDefaults.set(.isAnalog, original.isAnalog)
         ClockDefaults.set(.showDayOfWeek, original.showDayOfWeek)
