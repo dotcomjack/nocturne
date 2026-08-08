@@ -27,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.menuBar?.refreshIcon()
         }
 
+        // Hide everything blanks the bar, and our icon is the only way back,
+        // so it gets redrawn on top of the strip.
+        NocturneController.shared.overlay.beacon = { [weak self] in
+            guard let frame = self?.menuBar?.statusItemFrame else { return nil }
+            return (frame, NocturneController.shared.mode.symbolName)
+        }
+
         // Re-assert the saved mode at launch. Control Center may have been
         // restarted, the user may have changed things in System Settings, or
         // this may be a fresh login. Whatever the reason, the state on screen
