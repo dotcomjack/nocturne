@@ -79,13 +79,13 @@ enum ClockWindowLocator {
     /// drawing items into a screen's bar, that bar is hidden, and there is
     /// nothing there to cover.
     static func menuBarRects() -> [CGRect] {
-        let populated = Set(itemsByScreen().keys)
+        let items = itemsByScreen()
         let screens = NSScreen.screens
 
-        return populated.compactMap { index in
+        return items.compactMap { index, itemRects in
             guard index < screens.count else { return nil }
             let screen = screens[index]
-            let height = barHeight(for: screen)
+            let height = barHeight(for: screen, items: itemRects)
             return CGRect(x: screen.frame.minX,
                           y: screen.frame.maxY - height,
                           width: screen.frame.width,
@@ -95,10 +95,24 @@ enum ClockWindowLocator {
 
     /// Menu bar thickness for a screen.
     ///
-    /// `frame.maxY - visibleFrame.maxY` is the honest measurement and accounts
-    /// for a notch, but it also swallows the Dock when the Dock is docked to the
-    /// top. `NSStatusBar.thickness` is the floor that keeps that case sane.
-    private static func barHeight(for screen: NSScreen) -> CGFloat {
+    /// Measured from the menu bar items actually drawn into it, because they are
+    /// exactly as tall as the bar. Everything else is an approximation:
+    ///
+    /// - `frame.maxY - visibleFrame.maxY` reads 34 on a notched display where
+    ///   the bar is really 33, so a strip built from it overhangs by a point.
+    ///   Two device pixels at 2x, full width, and the fill is measurably darker
+    ///   than the bar, so it renders as a hairline rule under the menu bar.
+    /// - That inset also swallows the Dock when the Dock is docked to the top,
+    ///   which would make the strip far too tall.
+    /// - `NSStatusBar.thickness` reads 22 here, well short of the real 33.
+    ///
+    /// The items are the ground truth, so use them and keep the rest as a
+    /// fallback for the moment before Control Center has drawn anything.
+    private static func barHeight(for screen: NSScreen, items: [CGRect]) -> CGFloat {
+        if let measured = items.map(\.height).max(), measured > 0 {
+            return measured
+        }
+
         let inset = screen.frame.maxY - screen.visibleFrame.maxY
         let thickness = NSStatusBar.system.thickness
         guard inset > 0 else { return thickness }

@@ -179,9 +179,28 @@ final class OverlayController {
     /// Only for `.entireBar`. In `.clock` coverage the bar is untouched and the
     /// real status item is already showing.
     private func syncBeacon() {
-        guard coverage == .entireBar, !windows.isEmpty, let spec = beacon?() else {
+        // The frame has to land inside a strip we actually placed.
+        //
+        // AppKit keeps reporting a plausible on-bar frame for a status item
+        // macOS has already dropped for menu bar overflow, or that a menu bar
+        // manager has parked off-screen. Measured: of 26 test items, 20 were
+        // dropped, and every one still reported `isVisible == true` with a
+        // frame that matched no real slot, running as far left as x=57.
+        //
+        // Painting the glyph at a slot we do not occupy would advertise a way
+        // out that does nothing when clicked, which is worse than no glyph. If
+        // the icon is genuinely off the bar there is no way back, so take the
+        // strip down rather than blank the bar behind a decoy.
+        guard coverage == .entireBar,
+              !windows.isEmpty,
+              let spec = beacon?(),
+              windows.contains(where: { $0.frame.intersects(spec.frame) })
+        else {
             beaconWindow?.orderOut(nil)
             beaconWindow = nil
+            if coverage == .entireBar, !windows.isEmpty, beacon?() != nil {
+                teardown()
+            }
             return
         }
 

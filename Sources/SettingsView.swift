@@ -16,6 +16,7 @@ struct SettingsView: View {
     @ObservedObject private var controller = NocturneController.shared
     @Environment(\.colorScheme) private var scheme
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var loginItemsBlocked = false
 
     private var accent: Color { Palette.accent(for: scheme) }
 
@@ -36,6 +37,13 @@ struct SettingsView: View {
             }
         }
         .frame(width: 430, height: 720)
+        // The user may have changed Clock Options in System Settings since we
+        // last looked. Pull the live values in so the panel never lies.
+        .onAppear {
+            controller.resyncClockOptions()
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            loginItemsBlocked = false
+        }
     }
 
     // MARK: - Header
@@ -140,8 +148,28 @@ struct SettingsView: View {
                     .tint(accent)
                     .onChange(of: launchAtLogin) { _, newValue in
                         controller.launchAtLogin = newValue
-                        launchAtLogin = SMAppService.mainApp.status == .enabled
+                        let actual = SMAppService.mainApp.status == .enabled
+                        // If macOS refused, the switch snaps back on its own.
+                        // Say why, instead of leaving it looking broken.
+                        loginItemsBlocked = (newValue != actual)
+                        launchAtLogin = actual
                     }
+
+                if loginItemsBlocked {
+                    Divider().opacity(0.35)
+                    Row {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("macOS is blocking this.")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Nocturne has to be allowed under Login Items first.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Open") { SMAppService.openSystemSettingsLoginItems() }
+                            .controlSize(.small)
+                    }
+                }
                 if controller.canRestoreOriginalClock {
                     Divider().opacity(0.35)
                     Row {

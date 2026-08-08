@@ -40,11 +40,17 @@ final class NocturneController: ObservableObject {
 
     // Clock Options passthrough. These mirror the System Settings pane, so a
     // user who only wants to lose the date never has to touch a mode.
-    @AppStorage("showDayOfWeek") var showDayOfWeek = true { didSet { clockOptionsChanged() } }
-    @AppStorage("showAMPM")      var showAMPM      = true { didSet { clockOptionsChanged() } }
-    @AppStorage("showSeconds")   var showSeconds   = false { didSet { clockOptionsChanged() } }
+    @AppStorage("showDayOfWeek") var showDayOfWeek = true {
+        didSet { clockOptionChanged(.showDayOfWeek, showDayOfWeek) }
+    }
+    @AppStorage("showAMPM") var showAMPM = true {
+        didSet { clockOptionChanged(.showAMPM, showAMPM) }
+    }
+    @AppStorage("showSeconds") var showSeconds = false {
+        didSet { clockOptionChanged(.showSeconds, showSeconds) }
+    }
     @AppStorage("dateVisibility") var dateVisibility: ClockDefaults.DateVisibility = .whenSpaceAllows {
-        didSet { clockOptionsChanged() }
+        didSet { clockOptionChanged(.showDate, dateVisibility.rawValue) }
     }
 
     let overlay = OverlayController()
@@ -143,8 +149,24 @@ final class NocturneController: ObservableObject {
         }
     }
 
-    private func clockOptionsChanged() {
-        writeClockOptions()
+    /// Writes ONE clock option, never all four.
+    ///
+    /// The old version pushed every key on any change, so flipping "Day of the
+    /// week" also rewrote seconds, AM/PM and the date from our own cached
+    /// copies. If the user had changed one of those in System Settings since we
+    /// last looked, it was silently reverted. Measured: user turns Seconds on in
+    /// System Settings, flips an unrelated Nocturne switch, seconds vanish.
+    private func clockOptionChanged(_ key: ClockDefaults.Key, _ value: Bool) {
+        ClockDefaults.set(key, value)
+        finishClockOptionChange()
+    }
+
+    private func clockOptionChanged(_ key: ClockDefaults.Key, _ value: Int) {
+        ClockDefaults.set(key, value)
+        finishClockOptionChange()
+    }
+
+    private func finishClockOptionChange() {
         ControlCenter.reload()
         guard mode.usesOverlay else { return }
 
@@ -159,11 +181,20 @@ final class NocturneController: ObservableObject {
         }
     }
 
-    private func writeClockOptions() {
-        ClockDefaults.set(.showDayOfWeek, showDayOfWeek)
-        ClockDefaults.set(.showAMPM, showAMPM)
-        ClockDefaults.set(.showSeconds, showSeconds)
-        ClockDefaults.set(.showDate, dateVisibility.rawValue)
+    /// Pulls the live system values back into our own copies.
+    ///
+    /// Called whenever Settings is shown, so the panel never displays a stale
+    /// picture of a clock the user has since changed in System Settings. Writes
+    /// go straight to `UserDefaults` so the `didSet`s do not fire and push the
+    /// values back out again.
+    func resyncClockOptions() {
+        let live = ClockDefaults.snapshot()
+        let defaults = UserDefaults.standard
+        defaults.set(live.showDayOfWeek, forKey: "showDayOfWeek")
+        defaults.set(live.showAMPM, forKey: "showAMPM")
+        defaults.set(live.showSeconds, forKey: "showSeconds")
+        defaults.set(live.showDate, forKey: "dateVisibility")
+        objectWillChange.send()
     }
 
     /// Polls until Control Center's geometry has **settled**, then runs `body`.
