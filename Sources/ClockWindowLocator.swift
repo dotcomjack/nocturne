@@ -56,6 +56,36 @@ enum ClockWindowLocator {
         return byScreen
     }
 
+    /// Whether a real menu bar item is drawn at this Cocoa rect.
+    ///
+    /// AppKit keeps reporting a plausible on-bar frame for a status item macOS
+    /// has dropped for menu bar overflow, so `NSStatusItem` cannot be trusted
+    /// about its own position. The window list can: every status item, ours
+    /// included, is hosted by Control Center as a real window, and if no such
+    /// window exists at that rect then nothing is drawn there.
+    ///
+    /// Geometry only, so no Screen Recording permission is involved.
+    static func hasMenuBarItem(at cocoaRect: CGRect) -> Bool {
+        guard let primary = NSScreen.screens.first else { return false }
+        let quartzY = primary.frame.maxY - cocoaRect.origin.y - cocoaRect.height
+
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+
+        return raw.contains { window in
+            guard window[kCGWindowOwnerName as String] as? String == ownerName,
+                  let boundsValue = window[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: boundsValue)
+            else { return false }
+
+            return abs(rect.minX - cocoaRect.minX) <= 2
+                && abs(rect.minY - quartzY) <= 2
+                && abs(rect.width - cocoaRect.width) <= 2
+        }
+    }
+
     /// Clock rects in Cocoa screen coordinates, one per menu bar, ready to hand
     /// to `NSWindow`.
     static func rects() -> [CGRect] {

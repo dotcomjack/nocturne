@@ -124,6 +124,17 @@ final class OverlayController {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil)
 
+        // Light and dark are baked in when the views are built: the flat fill
+        // colour goes into a layer once, and the glyph is tinted once with
+        // isTemplate off. With Appearance set to Auto, sunset would otherwise
+        // leave a white glyph on a light strip, invisible, which is the
+        // advertised way out of a blanked bar.
+        DistributedNotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appearanceChanged),
+            name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil)
+
         sync()
     }
 
@@ -137,11 +148,18 @@ final class OverlayController {
             self,
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil)
+        DistributedNotificationCenter.default.removeObserver(self)
 
         teardown()
     }
 
     @objc private func screensChanged() { sync() }
+
+    /// Rebuild rather than sync: the fill colour and the glyph tint are only
+    /// computed when the views are constructed, so they have to be remade.
+    @objc private func appearanceChanged() {
+        DispatchQueue.main.async { [weak self] in self?.rebuild() }
+    }
 
     // MARK: - Placement
 
@@ -160,6 +178,17 @@ final class OverlayController {
         }
 
         guard !rects.isEmpty else {
+            teardown()
+            return
+        }
+
+        // Decide about the beacon BEFORE placing anything.
+        //
+        // Blanking the whole bar hides the one control that turns it back on,
+        // so the glyph has to be real. Checking it after placing meant the
+        // windows were created and then torn down on the same pass, which on a
+        // repeating 2s tracker is a strip that flashes on and off forever.
+        if coverage == .entireBar, beacon?() != nil, !beaconIsReal {
             teardown()
             return
         }
@@ -186,29 +215,28 @@ final class OverlayController {
     ///
     /// Only for `.entireBar`. In `.clock` coverage the bar is untouched and the
     /// real status item is already showing.
+    /// Whether our status item is genuinely drawn where AppKit claims it is.
+    ///
+    /// AppKit reports a plausible on-bar frame for a status item macOS has
+    /// dropped for menu bar overflow: of 26 test items, 20 were dropped and
+    /// every one still claimed `isVisible` with a frame matching no real slot,
+    /// running as far left as x=57. Painting the glyph there would advertise a
+    /// way out that does nothing when clicked, which is worse than no glyph.
+    ///
+    /// An earlier version tested the frame against the strip we had placed.
+    /// That was vacuous in the one mode it existed for: in Hide everything the
+    /// strip spans the full screen width, so any frame in the bar's y-band
+    /// intersects it, including x=57. This asks the window list whether an item
+    /// is actually drawn there instead.
+    private var beaconIsReal: Bool {
+        guard let spec = beacon?() else { return false }
+        return ClockWindowLocator.hasMenuBarItem(at: spec.frame)
+    }
+
     private func syncBeacon() {
-        // The frame has to land inside a strip we actually placed.
-        //
-        // AppKit keeps reporting a plausible on-bar frame for a status item
-        // macOS has already dropped for menu bar overflow, or that a menu bar
-        // manager has parked off-screen. Measured: of 26 test items, 20 were
-        // dropped, and every one still reported `isVisible == true` with a
-        // frame that matched no real slot, running as far left as x=57.
-        //
-        // Painting the glyph at a slot we do not occupy would advertise a way
-        // out that does nothing when clicked, which is worse than no glyph. If
-        // the icon is genuinely off the bar there is no way back, so take the
-        // strip down rather than blank the bar behind a decoy.
-        guard coverage == .entireBar,
-              !windows.isEmpty,
-              let spec = beacon?(),
-              windows.contains(where: { $0.frame.intersects(spec.frame) })
-        else {
+        guard coverage == .entireBar, !windows.isEmpty, let spec = beacon?(), beaconIsReal else {
             beaconWindow?.orderOut(nil)
             beaconWindow = nil
-            if coverage == .entireBar, !windows.isEmpty, beacon?() != nil {
-                teardown()
-            }
             return
         }
 
