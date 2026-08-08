@@ -30,11 +30,33 @@ final class MenuBarController: NSObject {
 
         shimmer = ShimmerAnimator(
             currentSymbol: { [weak self] in self?.currentSymbol },
+            // Draw from the exact image on screen, so a frame can never differ
+            // in size from the resting glyph and resize the status item.
+            restingImage: { [weak self] in self?.restingImage },
+            isDark: { [weak self] in
+                let appearance = self?.statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+                return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            },
             apply: { [weak self] image in
                 guard let self else { return }
                 self.statusItem.button?.image = image ?? self.restingImage
             })
         shimmer?.setCadence(controller.shimmerCadence)
+
+        // The band colour is baked into the frames, so they have to be rebuilt
+        // when light and dark flip.
+        DistributedNotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appearanceChanged),
+            name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil)
+    }
+
+    @objc private func appearanceChanged() {
+        DispatchQueue.main.async { [weak self] in
+            self?.shimmer?.invalidate()
+            self?.refreshIcon()
+        }
     }
 
     /// Preview a sweep immediately, so changing the setting shows what it does.
@@ -66,13 +88,17 @@ final class MenuBarController: NSObject {
             ?? NSImage(systemSymbolName: "clock", accessibilityDescription: "Nocturne")
 
         image?.isTemplate = true
+
         button.image = image
         button.toolTip = "Nocturne, \(mode.title)"
 
         // Remember the resting state so a sweep has something to return to,
         // and drop the shimmer's cached frames if the glyph changed.
         restingImage = image
-        currentSymbol = mode.symbolName
+        if currentSymbol != mode.symbolName {
+            currentSymbol = mode.symbolName
+            shimmer?.invalidate()
+        }
     }
 
     // MARK: - Menu

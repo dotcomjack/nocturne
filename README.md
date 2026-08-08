@@ -67,7 +67,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.1.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.1.1](https://github.com/dotcomjack/nocturne/releases/latest)**,
 unzip, drag to Applications, open it.
 
 Signed with a Developer ID and notarized by Apple, so it opens on a double click
