@@ -1,0 +1,62 @@
+import AppKit
+
+@main
+enum NocturneApp {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    private var menuBar: MenuBarController?
+    private var signalSources: [DispatchSourceSignal] = []
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        menuBar = MenuBarController()
+        installSignalHandlers()
+
+        // Re-assert the saved mode at launch. Control Center may have been
+        // restarted, the user may have changed things in System Settings, or
+        // this may be a fresh login. Whatever the reason, the state on screen
+        // should match the state in the menu.
+        NocturneController.shared.apply()
+        menuBar?.refreshIcon()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        NocturneController.shared.restoreSystemClock()
+    }
+
+    /// Restore the clock on signals too, not just on a clean AppKit quit.
+    ///
+    /// `applicationWillTerminate` never runs for `pkill`, Activity Monitor's
+    /// Quit, or a crash, and without this the clock stays analog with the app
+    /// gone. That is the one failure mode that would genuinely earn a utility a
+    /// bad reputation: the user cannot undo it without knowing the defaults key.
+    ///
+    /// `signal(_:SIG_IGN)` plus a `DispatchSource` is the safe pattern here.
+    /// Calling AppKit from a raw C signal handler is not async-signal-safe;
+    /// dispatch delivers the event on a normal queue instead.
+    private func installSignalHandlers() {
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler {
+                MainActor.assumeIsolated {
+                    NocturneController.shared.restoreSystemClock()
+                }
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
+}
