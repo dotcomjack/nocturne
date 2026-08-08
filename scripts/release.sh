@@ -26,6 +26,7 @@ VERSION="$(awk -F'"' '/MARKETING_VERSION/{print $2; exit}' project.yml)"
 DIST="dist"
 APP="$DIST/Nocturne.app"
 ZIP="$DIST/Nocturne-$VERSION.zip"
+DMG="$DIST/Nocturne-$VERSION.dmg"
 LOG="$DIST/build.log"
 
 echo "==> Version $VERSION"
@@ -91,5 +92,38 @@ echo "==> Repacking stapled app"
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
+echo "==> Building the disk image"
+# The zip is what Homebrew installs. The DMG is for the person who clicks
+# Download on the site and expects to drag the app onto Applications.
+DMG_STAGE="$DIST/dmg"
+rm -rf "$DMG_STAGE"
+mkdir -p "$DMG_STAGE"
+# Copy the STAPLED app, not the build product. The ticket lives inside the
+# bundle, so a DMG assembled before stapling ships an app that has to ask
+# Apple on first launch, and refuses to open on a machine that is offline.
+ditto "$APP" "$DMG_STAGE/Nocturne.app"
+ln -s /Applications "$DMG_STAGE/Applications"
+rm -f "$DMG"
+hdiutil create -volname "Nocturne" -srcfolder "$DMG_STAGE" \
+  -ov -format UDZO -quiet "$DMG"
+rm -rf "$DMG_STAGE"
+
+echo "==> Signing the disk image"
+codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+
+echo "==> Notarizing the disk image"
+# The DMG needs its own ticket. Stapling the app does not staple the
+# container, and Gatekeeper assesses the container that was downloaded.
+xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+
+echo "==> Gatekeeper assessment of the disk image"
+# -t open is the check that matters for a DMG. -t exec assesses an
+# executable and reports "rejected" on a disk image that is perfectly fine.
+spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+
 echo
-echo "Done. Notarized and stapled: $ZIP"
+echo "Done."
+echo "  Homebrew: $ZIP"
+echo "  Humans:   $DMG"
