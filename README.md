@@ -67,7 +67,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.0.3](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.0.4](https://github.com/dotcomjack/nocturne/releases/latest)**,
 unzip, drag to Applications, open it.
 
 Signed with a Developer ID and notarized by Apple, so it opens on a double click
@@ -97,7 +97,7 @@ Four modes:
 | **Clock visible** | Normal macOS clock. |
 | **Blind** *(default)* | Analog dial. The time is there, you just cannot read it. |
 | **Gone** | A patch drawn over just the clock. Experimental, see below. |
-| **Hide everything** | The whole menu bar goes blank. Clicks still work, you just cannot read it. |
+| **Hide everything** | The whole menu bar goes blank, except Nocturne's own icon. Clicks still work, you just cannot read it. |
 
 Settings also exposes the same switches as System Settings under Menu Bar and
 Clock Options, so you can drop just the date, just the day, or just AM/PM without
@@ -149,6 +149,11 @@ Gone turns the clock analog first, so the patch covers 44pt instead of 142pt. A
 mismatch across 44pt reads as a smudge. Across 142pt it reads as a bug.
 
 If the seam bothers you, use Blind. It is the default for a reason.
+
+**Hide everything keeps its own icon lit.** Blanking the bar would otherwise
+hide the one control that turns it back on, so the glyph is redrawn on top of
+the strip. Clicks pass straight through it to the real status item, so the menu
+opens normally.
 
 **Hide everything has no seam**, which is counterintuitive but follows directly
 from the above. A patch over part of the bar has neighbours it has to match. A
