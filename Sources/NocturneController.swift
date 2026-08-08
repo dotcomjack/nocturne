@@ -166,14 +166,35 @@ final class NocturneController: ObservableObject {
         ClockDefaults.set(.showDate, dateVisibility.rawValue)
     }
 
-    /// Polls until Control Center has put the clock back on screen, then runs
-    /// `body`. Gives up after a few seconds so a failure never wedges the app.
+    /// Polls until Control Center's geometry has **settled**, then runs `body`.
+    ///
+    /// Waiting for "the clock is on screen" is not enough, and measuring showed
+    /// why. Two things go wrong right after a Control Center restart:
+    ///
+    /// 1. The dying process's windows are still listed. At t=0.004s after the
+    ///    kill, `rects()` returns the pre-restart rect, so a non-empty test
+    ///    short-circuits instantly on stale geometry. The windows only actually
+    ///    disappear around t=0.03s.
+    /// 2. When Control Center comes back, around t=0.6s, its items animate in.
+    ///    The clock was measured growing 36 to 38 to 40 to 42 to 44pt wide over
+    ///    roughly a third of a second.
+    ///
+    /// Placing the strip against either one puts it over the wrong menu bar
+    /// item until the next 2s poll corrects it. Measured misses of 11pt, 32pt
+    /// and a 33pt width error, which is a different icon entirely.
+    ///
+    /// So require the same rect twice in a row before believing it.
     private func waitForControlCenter(timeout: TimeInterval = 6.0,
                                       then body: @escaping () -> Void) {
         let deadline = Date().addingTimeInterval(timeout)
+        var previous: [CGRect]?
 
         func poll() {
-            if !ClockWindowLocator.rects().isEmpty || Date() >= deadline {
+            let current = ClockWindowLocator.rects()
+            let settled = !current.isEmpty && current == previous
+            previous = current
+
+            if settled || Date() >= deadline {
                 body()
                 return
             }
