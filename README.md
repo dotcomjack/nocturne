@@ -111,12 +111,18 @@ quit, the same as every other menu bar app.
 
 Four modes:
 
+![The same strip of the macOS menu bar in each of Nocturne's four modes: Clock visible showing Sat Aug 8 6:29 PM, Blind showing a small analog dial in its place, Gone with the clock patched over, and Hide everything with the whole bar blank except Nocturne's own moon icon](docs/modes/nocturne-modes.png)
+
 | Mode | What it does |
 |---|---|
 | **Clock visible** | Normal macOS clock. |
 | **Blind** *(default)* | Analog dial. The time is there, you just cannot read it. |
 | **Gone** | A patch drawn over just the clock. Experimental, see below. |
 | **Hide everything** | The whole menu bar goes blank, except Nocturne's own icon. Clicks still work, you just cannot read it. |
+
+Those are real captures of one menu bar on macOS 26.3.1, not mockups. The faint
+band at the right of the **Gone** row is the seam described below, left in
+rather than retouched out.
 
 Settings also exposes the same switches as System Settings under Menu Bar and
 Clock Options, so you can drop just the date, just the day, or just AM/PM without
