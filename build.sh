@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# █ dcj · dotcomjack.com · MIT
 #
 # Builds Nocturne and installs it to /Applications.
 #
