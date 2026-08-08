@@ -20,6 +20,13 @@ struct SettingsView: View {
 
     private var accent: Color { Palette.accent(for: scheme) }
 
+    /// Pull live system state into the panel.
+    private func refresh() {
+        controller.resyncClockOptions()
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+        loginItemsBlocked = false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -37,12 +44,18 @@ struct SettingsView: View {
             }
         }
         .frame(width: 430, height: 880)   // tallest state is Gone plus the login warning
-        // The user may have changed Clock Options in System Settings since we
-        // last looked. Pull the live values in so the panel never lies.
-        .onAppear {
-            controller.resyncClockOptions()
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-            loginItemsBlocked = false
+        // Refresh on every show, not just the first.
+        //
+        // The Settings window is a singleton that is only ordered out when
+        // closed, so its view never leaves and `onAppear` fires exactly once
+        // per process. For a launch-at-login agent that means once, at login:
+        // reopening Settings showed the values from the very first open, and
+        // the "macOS is blocking this" row stayed up even after the user had
+        // approved Nocturne under Login Items.
+        .onAppear { refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard (note.object as? NSWindow) === SettingsWindow.shared.window else { return }
+            refresh()
         }
     }
 
@@ -331,7 +344,7 @@ final class SettingsWindow {
 
     static let shared = SettingsWindow()
 
-    private var window: NSWindow?
+    private(set) var window: NSWindow?
 
     func show() {
         if window == nil {

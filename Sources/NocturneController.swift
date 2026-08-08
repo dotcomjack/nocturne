@@ -14,9 +14,10 @@ final class NocturneController: ObservableObject {
 
     /// Fires whenever `mode` changes so the menu bar glyph can follow it.
     ///
-    /// A callback rather than `objectWillChange`: `@AppStorage` inside an
-    /// `ObservableObject` does not reliably publish, so subscribing to it would
-    /// leave the icon showing a different mode than the menu's checkmark.
+    /// A callback because the menu bar item is AppKit, not SwiftUI, so nothing
+    /// re-renders it on its own. (`@AppStorage` inside an `ObservableObject`
+    /// does publish, measured: the view body re-evaluates within 10ms of every
+    /// write path. An earlier comment here claimed otherwise and was wrong.)
     var onModeChange: (() -> Void)?
 
     // MARK: - Persisted state
@@ -58,6 +59,24 @@ final class NocturneController: ObservableObject {
     /// Guards against a stale `waitForControlCenter` callback activating the
     /// overlay after the mode has already moved on.
     private var applyGeneration = 0
+
+    /// True while we are pulling system values IN, so the `didSet`s do not push
+    /// them straight back OUT again.
+    ///
+    /// The previous approach wrote the raw `UserDefaults` keys to dodge those
+    /// `didSet`s. That silently failed for exactly the switches the user had
+    /// already touched: `@AppStorage` caches a key in memory once it has been
+    /// assigned through the wrapper, and stops reading through to
+    /// `UserDefaults`. So the panel kept showing the old position, and the next
+    /// click wrote a value the system already had and appeared to do nothing.
+    private var isSyncing = false
+
+    /// Coalesces Control Center restarts.
+    ///
+    /// It is a KeepAlive job with a one second throttle, so several kills in
+    /// quick succession leave the menu bar empty for seconds. Flipping three
+    /// Clock Options in a row used to do exactly that.
+    private var pendingReload: DispatchWorkItem?
 
     private init() {
         Self.adoptSystemClockSettingsOnFirstRun()
@@ -157,16 +176,27 @@ final class NocturneController: ObservableObject {
     /// last looked, it was silently reverted. Measured: user turns Seconds on in
     /// System Settings, flips an unrelated Nocturne switch, seconds vanish.
     private func clockOptionChanged(_ key: ClockDefaults.Key, _ value: Bool) {
+        guard !isSyncing else { return }
         ClockDefaults.set(key, value)
         finishClockOptionChange()
     }
 
     private func clockOptionChanged(_ key: ClockDefaults.Key, _ value: Int) {
+        guard !isSyncing else { return }
         ClockDefaults.set(key, value)
         finishClockOptionChange()
     }
 
     private func finishClockOptionChange() {
+        // Debounce so a run of switch flips costs one restart, not one each.
+        pendingReload?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.reloadAfterClockOptionChange() }
+        pendingReload = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    }
+
+    private func reloadAfterClockOptionChange() {
+        pendingReload = nil
         ControlCenter.reload()
         guard mode.usesOverlay else { return }
 
@@ -189,12 +219,12 @@ final class NocturneController: ObservableObject {
     /// values back out again.
     func resyncClockOptions() {
         let live = ClockDefaults.snapshot()
-        let defaults = UserDefaults.standard
-        defaults.set(live.showDayOfWeek, forKey: "showDayOfWeek")
-        defaults.set(live.showAMPM, forKey: "showAMPM")
-        defaults.set(live.showSeconds, forKey: "showSeconds")
-        defaults.set(live.showDate, forKey: "dateVisibility")
-        objectWillChange.send()
+        isSyncing = true
+        showDayOfWeek = live.showDayOfWeek
+        showAMPM = live.showAMPM
+        showSeconds = live.showSeconds
+        dateVisibility = ClockDefaults.DateVisibility(rawValue: live.showDate) ?? .whenSpaceAllows
+        isSyncing = false
     }
 
     /// Polls until Control Center's geometry has **settled**, then runs `body`.
@@ -282,13 +312,21 @@ final class NocturneController: ObservableObject {
         mode = .off
         overlay.deactivate()
 
-        // These four are ours alone, so write them directly. Each has a `didSet`
-        // that would otherwise fire its own Control Center restart.
-        let defaults = UserDefaults.standard
-        defaults.set(original.showDayOfWeek, forKey: "showDayOfWeek")
-        defaults.set(original.showAMPM, forKey: "showAMPM")
-        defaults.set(original.showSeconds, forKey: "showSeconds")
-        defaults.set(original.showDate, forKey: "dateVisibility")
+        // Assign through the properties, under the sync flag so none of them
+        // fires its own Control Center restart.
+        //
+        // Writing the raw keys here instead looked equivalent and was not:
+        // `@AppStorage` caches a key in memory once it has been assigned through
+        // the wrapper, so a raw write is invisible to any switch the user had
+        // already touched this session. Restore then moved the clock but not the
+        // switch reporting it, and the next click on that switch wrote a value
+        // the system already had and appeared to do nothing.
+        isSyncing = true
+        showDayOfWeek = original.showDayOfWeek
+        showAMPM = original.showAMPM
+        showSeconds = original.showSeconds
+        dateVisibility = ClockDefaults.DateVisibility(rawValue: original.showDate) ?? .whenSpaceAllows
+        isSyncing = false
 
         ClockDefaults.set(.isAnalog, original.isAnalog)
         ClockDefaults.set(.showDayOfWeek, original.showDayOfWeek)
