@@ -67,18 +67,23 @@ bundle, not from your shell.
 
 ## Install
 
+**[Download Nocturne 1.0.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
+unzip, drag to Applications, open it.
+
+Signed with a Developer ID and notarized by Apple, so it opens on a double click
+with no right-click-to-open dance and no Gatekeeper warning. Universal, Apple
+silicon and Intel.
+
+Or build it yourself, which is the point of it being MIT:
+
 ```sh
 git clone https://github.com/dotcomjack/nocturne.git
 cd nocturne
 ./build.sh
 ```
 
-That builds and drops `Nocturne.app` in `/Applications`. Requires
-[xcodegen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) and
-Xcode.
-
-There is no notarized release yet. Build it yourself and read the source, it is
-short on purpose.
+Requires [xcodegen](https://github.com/yonaskolb/XcodeGen) (`brew install
+xcodegen`) and Xcode.
 
 ## Use
 
