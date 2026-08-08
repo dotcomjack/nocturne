@@ -61,8 +61,20 @@ final class OverlayController {
         }
     }
 
+    /// How much of the menu bar the strip covers.
+    enum Coverage {
+        /// Just Control Center's clock.
+        case clock
+        /// The entire bar, on every screen.
+        case entireBar
+    }
+
     var fill: Fill = .material {
         didSet { guard fill != oldValue else { return }; rebuild() }
+    }
+
+    var coverage: Coverage = .clock {
+        didSet { guard coverage != oldValue else { return }; rebuild() }
     }
 
     private var windows: [NSWindow] = []
@@ -115,7 +127,11 @@ final class OverlayController {
     /// which is the normal state in full screen. Tearing the windows down there
     /// is what stops a stray strip floating over a video.
     private func sync() {
-        let rects = ClockWindowLocator.rects()
+        let rects: [CGRect]
+        switch coverage {
+        case .clock:     rects = ClockWindowLocator.rects()
+        case .entireBar: rects = ClockWindowLocator.menuBarRects()
+        }
 
         guard !rects.isEmpty else {
             teardown()

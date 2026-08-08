@@ -9,7 +9,7 @@ Nocturne takes the clock away, in one click, and gives it back the same way.
 
 ![The macOS menu bar with a normal clock reading Sat Aug 8 3:14 AM, and below it the same menu bar with the clock replaced by a small analog dial](docs/clock-before-after.png)
 
-macOS 14 or later. No permissions. No private APIs. About 600 lines of Swift.
+macOS 14 or later. No permissions. No private APIs. Around 1,000 lines of Swift.
 
 ---
 
@@ -43,11 +43,25 @@ tells the time. Your eye stops catching it, and nothing is hidden, moved, or
 drawn over.
 
 **Measure, do not screenshot.** Every number above came from
-`CGWindowListCopyWindowInfo`, filtering for `owner == "Control Center"` and
-`name == "Clock"` and reading the width. Sleep-and-screenshot lied twice during
-development: Control Center takes a few seconds to repopulate after a restart,
-and a screenshot taken during that gap shows an empty menu bar that looks exactly
-like a successful hide.
+`CGWindowListCopyWindowInfo`, reading the clock window's width directly.
+Sleep-and-screenshot lied twice during development: Control Center takes a few
+seconds to repopulate after a restart, and a screenshot taken during that gap
+shows an empty menu bar that looks exactly like a successful hide.
+
+**And the window list has a trap in it.** `kCGWindowBounds` is free to read, but
+`kCGWindowName` is gated behind Screen Recording. An early version of the locator
+filtered on `name == "Clock"` and appeared to work perfectly, because it was
+being launched from a terminal and inheriting that terminal's permission.
+Launched normally as an app it returned nothing, silently:
+
+| launched as | windows with a readable name | clock found |
+|---|---|---|
+| bare binary from Terminal | 10 | yes |
+| `.app` via `open` | 0 | **no** |
+
+So Nocturne identifies the clock by **where it sits**, never by what it is
+called. If you test anything against the window list, test it as a real app
+bundle, not from your shell.
 
 ---
 
@@ -68,30 +82,32 @@ short on purpose.
 
 ## Use
 
-The menu bar icon is the whole interface.
+The menu bar icon is the whole interface. **Click it** for modes, settings and
+quit, the same as every other menu bar app.
 
-- **Click** toggles the clock off and back on.
-- **Right click** for modes, settings, and quit.
-
-Three modes:
+Four modes:
 
 | Mode | What it does |
 |---|---|
 | **Clock visible** | Normal macOS clock. |
 | **Blind** *(default)* | Analog dial. The time is there, you just cannot read it. |
-| **Gone** | A patch drawn over the clock. Experimental, see below. |
+| **Gone** | A patch drawn over just the clock. Experimental, see below. |
+| **Hide everything** | The whole menu bar goes blank. Clicks still work, you just cannot read it. |
 
 Settings also exposes the same switches as System Settings under Menu Bar and
 Clock Options, so you can drop just the date, just the day, or just AM/PM without
 touching a mode. Those are real, and each one is measured:
 
+Each row below **adds to the one above it**, it is a ladder rather than four
+independent settings:
+
 | Setting | Clock width |
 |---|---|
 | Baseline | 142pt |
 | Day of week off | 119pt |
-| Date set to Never | 76pt |
-| AM/PM off | 55pt |
-| Blind | 44pt |
+| + Date set to Never | 76pt |
+| + AM/PM off | 55pt |
+| + Blind | 44pt |
 
 ## About Gone
 
@@ -129,22 +145,35 @@ mismatch across 44pt reads as a smudge. Across 142pt it reads as a bug.
 
 If the seam bothers you, use Blind. It is the default for a reason.
 
+**Hide everything has no seam**, which is counterintuitive but follows directly
+from the above. A patch over part of the bar has neighbours it has to match. A
+patch over the *whole* bar has none: its only edge is the bar's own bottom edge,
+which is already a boundary. So the mode that covers the most is the one that
+looks cleanest.
+
 ## Getting your clock back
 
-Nocturne restores the clock when you quit it, including on `pkill`, Activity
-Monitor's Quit, and logout. If it ever dies badly and leaves the clock analog:
+**Nocturne adopts your existing Clock Options the first time it runs.** It reads
+whatever you already had set in System Settings and starts from there, rather
+than imposing its own defaults on you. It also snapshots that original state, so
+Settings can put every clock setting back exactly as it was.
+
+On its own, Nocturne changes exactly one key: `IsAnalog`. It only writes the
+other four when you move a switch in its Settings window yourself.
+
+It restores `IsAnalog` when you quit, including on `pkill` and Activity Monitor's
+Quit. If it ever dies badly and leaves the clock analog:
 
 ```sh
 defaults write com.apple.menuextra.clock IsAnalog -bool false
 killall ControlCenter
 ```
 
-That is the entire undo. Nocturne writes exactly one Apple preference key, and
-that is the line that reverses it.
+That is the entire undo, and it needs no app installed to work.
 
 ## What it does not do
 
-- It does not hide other menu bar items. That is [Ice](https://github.com/jordanbaird/Ice), which is excellent and does it properly.
+- It does not *manage* other menu bar items. Hide everything blanks the whole bar, but if you want per-icon control, ordering and hidden sections, that is [Ice](https://github.com/jordanbaird/Ice), which is excellent and does it properly.
 - It does not use private APIs, so it will not break on a macOS update.
 - It does not ask for Accessibility or Screen Recording.
 - It does not phone home, and there is nothing to phone home about.

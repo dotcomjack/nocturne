@@ -21,6 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar = MenuBarController()
         installSignalHandlers()
 
+        // Keep the glyph honest when the mode is changed from the Settings
+        // window rather than the menu.
+        NocturneController.shared.onModeChange = { [weak self] in
+            self?.menuBar?.refreshIcon()
+        }
+
         // Re-assert the saved mode at launch. Control Center may have been
         // restarted, the user may have changed things in System Settings, or
         // this may be a fresh login. Whatever the reason, the state on screen
@@ -31,6 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NocturneController.shared.restoreSystemClock()
+    }
+
+    /// Opening Nocturne again while it is already running shows Settings.
+    ///
+    /// It is an agent app with no Dock icon and no window, so double clicking it
+    /// in Applications would otherwise appear to do nothing at all.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        SettingsWindow.shared.show()
+        return true
     }
 
     /// Restore the clock on signals too, not just on a clean AppKit quit.
