@@ -1,3 +1,4 @@
+// █ dcj · dotcomjack.com · MIT
 import AppKit
 import Combine
 import ServiceManagement

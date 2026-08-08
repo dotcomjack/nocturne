@@ -1,3 +1,4 @@
+// █ dcj · dotcomjack.com · MIT
 import Foundation
 
 /// What Nocturne is currently doing to the menu bar clock.

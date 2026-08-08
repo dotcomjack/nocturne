@@ -1,3 +1,4 @@
+// █ dcj · dotcomjack.com · MIT
 import AppKit
 
 /// How often the menu bar icon shimmers.
