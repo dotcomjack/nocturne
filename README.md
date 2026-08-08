@@ -1,3 +1,15 @@
+<!-- dcj-tag:start -->
+```
+██████╗  ██████╗     ██╗
+██╔══██╗██╔════╝     ██║
+██║  ██║██║          ██║
+██║  ██║██║     ██   ██║
+██████╔╝╚██████╗╚█████╔╝
+╚═════╝  ╚═════╝ ╚════╝
+d o t c o m j a c k
+```
+<!-- dcj-tag:end -->
+
 # Nocturne
 
 **Stop your menu bar clock from telling you it is 3am.**

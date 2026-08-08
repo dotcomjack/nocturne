@@ -1,3 +1,4 @@
+# █ dcj · dotcomjack.com · MIT
 # Builds the four-mode comparison image from the raw menu bar captures.
 #
 # Each row is the SAME strip of the real menu bar, in one of Nocturne's four
