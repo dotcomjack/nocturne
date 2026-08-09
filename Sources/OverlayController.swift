@@ -78,6 +78,26 @@ final class OverlayController {
         didSet { guard coverage != oldValue else { return }; rebuild() }
     }
 
+    /// Drop the strip while the pointer is on the menu bar, so the bar can be
+    /// read by moving to it.
+    ///
+    /// Only the overlay modes can offer this. `blind` hides the time by writing
+    /// Control Center's own `IsAnalog` preference, and undoing that costs a
+    /// Control Center restart, which is a KeepAlive job on a 1s throttle. A
+    /// hover cannot pay half a second and a menu bar blink each way.
+    var hoverToShow = false {
+        didSet {
+            guard hoverToShow != oldValue else { return }
+            if hoverToShow {
+                startHoverMonitor()
+                refreshHoverBands()
+                evaluatePeek()
+            } else {
+                stopHoverMonitor()
+            }
+        }
+    }
+
     /// Where Nocturne's own status item is, in Cocoa coordinates, and which
     /// glyph it is currently showing.
     ///
@@ -97,6 +117,16 @@ final class OverlayController {
     private var currentBeaconSymbol: String?
     private var tracker: Timer?
     private(set) var isActive = false
+
+    /// The menu bar rects that count as a hover, one per bar, cached because
+    /// testing them on every mouse move would mean a window list read per event.
+    private var hoverBands: [CGRect] = []
+    private var hoverMonitor: Any?
+
+    /// The bar the pointer is on, if any. Held as the band rather than a plain
+    /// flag so that on a multi display setup only that screen's strip drops:
+    /// hovering the laptop should not uncover the clock on the external panel.
+    private var hoveredBand: CGRect?
 
     // MARK: - Lifecycle
 
@@ -136,6 +166,7 @@ final class OverlayController {
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil)
 
+        startHoverMonitor()
         sync()
     }
 
@@ -143,6 +174,7 @@ final class OverlayController {
         guard isActive else { return }
         isActive = false
 
+        stopHoverMonitor()
         tracker?.invalidate()
         tracker = nil
         NotificationCenter.default.removeObserver(
@@ -208,6 +240,100 @@ final class OverlayController {
         }
 
         syncBeacon()
+
+        // Last, because it only adjusts the alpha of what the lines above have
+        // just built. This is also the safety net for the hover state: the
+        // monitor is the fast path, but it cannot fire for a pointer that was
+        // already sitting on the bar before the mode changed.
+        refreshHoverBands()
+        evaluatePeek()
+    }
+
+    // MARK: - Hover to show
+
+    /// Where the pointer has to be for the strip to drop away.
+    ///
+    /// The whole menu bar, not the covered rect, and that is deliberate for
+    /// `.clock`: the patch there is a 44pt dial in the corner, and asking
+    /// someone to land on it exactly would make the feature feel broken. Moving
+    /// to the bar at all is the gesture.
+    private func refreshHoverBands() {
+        guard hoverToShow else {
+            hoverBands = []
+            return
+        }
+        // In `.entireBar` the strips already are the menu bars, so reuse them
+        // rather than paying for a second window list read every 2s.
+        hoverBands = (coverage == .entireBar)
+            ? windows.map(\.frame)
+            : ClockWindowLocator.menuBarRects()
+    }
+
+    /// Mouse-only global monitors need no permission, which is what makes this
+    /// feature affordable at all: Nocturne asks for nothing, and the whole
+    /// locator is built around avoiding a Screen Recording prompt.
+    ///
+    /// Measured on macOS 26.3.1 from an ad-hoc signed `.app` launched with
+    /// `open`, so no inherited terminal grant, reporting
+    /// `AXIsProcessTrusted() == false`: 131 `mouseMoved` events delivered.
+    /// Only key events are TCC gated. Polling `NSEvent.mouseLocation` on a
+    /// short timer was the alternative and is strictly worse, because it wakes
+    /// the CPU 20 times a second forever to notice a pointer that usually is
+    /// not moving.
+    private func startHoverMonitor() {
+        guard hoverToShow, isActive, hoverMonitor == nil else { return }
+        hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            // Global monitors are delivered on the main run loop.
+            MainActor.assumeIsolated { self?.evaluatePeek() }
+        }
+    }
+
+    private func stopHoverMonitor() {
+        if let hoverMonitor { NSEvent.removeMonitor(hoverMonitor) }
+        hoverMonitor = nil
+        hoverBands = []
+        if hoveredBand != nil {
+            hoveredBand = nil
+            applyPeek()
+        }
+    }
+
+    private func evaluatePeek() {
+        let point = NSEvent.mouseLocation
+        // Expanded a point vertically before testing. `CGRect.contains` excludes
+        // its own max edge, and a band's top edge IS the top of the screen,
+        // which is exactly where the pointer sits when someone slams it up to
+        // reach the menu bar. Without this the topmost row of pixels, the most
+        // likely place for the pointer to be, reads as not hovering.
+        let band = hoverBands.first { $0.insetBy(dx: 0, dy: -1).contains(point) }
+
+        guard band != hoveredBand else { return }
+        hoveredBand = band
+        applyPeek()
+    }
+
+    /// Alpha rather than `orderOut`, because `sync()` re-shows any window that
+    /// is not visible. Ordering out would put the strip back within 2 seconds
+    /// while the pointer was still resting on the bar.
+    private func applyPeek() {
+        for window in windows {
+            window.alphaValue = peekAlpha(for: window.frame)
+        }
+        if let beaconWindow {
+            beaconWindow.alphaValue = peekAlpha(for: beaconWindow.frame)
+        }
+    }
+
+    /// Transparent only for the bar the pointer is actually on.
+    ///
+    /// Matched by intersection rather than by index. A band spans its whole
+    /// screen, so the strip drawn into that bar is the one it overlaps, and
+    /// that holds without assuming `windows` and `hoverBands` came back from
+    /// the window server in the same order. They do not: both are built from a
+    /// dictionary keyed by screen, whose iteration order is not stable.
+    private func peekAlpha(for frame: CGRect) -> CGFloat {
+        guard let hoveredBand, hoveredBand.intersects(frame) else { return 1 }
+        return 0
     }
 
     // MARK: - Beacon
@@ -251,6 +377,11 @@ final class OverlayController {
         if window.frame != spec.frame {
             window.setFrame(spec.frame, display: false)
         }
+        // After the frame, because the beacon is born at .zero and only learns
+        // which bar it belongs to here. Set every pass rather than only on
+        // change: a beacon created while the pointer is already resting on the
+        // bar would otherwise appear at full opacity over an uncovered bar.
+        window.alphaValue = peekAlpha(for: window.frame)
         if !window.isVisible {
             window.orderFrontRegardless()
         }
@@ -331,6 +462,7 @@ final class OverlayController {
         window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+        window.alphaValue = peekAlpha(for: frame)   // see makeBeaconWindow
         window.contentView = makeContentView()
         window.setFrame(frame, display: false)
         window.orderFrontRegardless()

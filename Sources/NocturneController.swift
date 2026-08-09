@@ -40,6 +40,12 @@ final class NocturneController: ObservableObject {
         didSet { overlay.fill = overlayFill }
     }
 
+    /// Drop the cover while the pointer is on the menu bar. See
+    /// `OverlayController.hoverToShow` for why this is an overlay-only setting.
+    @AppStorage("hoverToShow") var hoverToShow = false {
+        didSet { overlay.hoverToShow = hoverToShow }
+    }
+
     /// How often the menu bar icon sweeps. See `ShimmerCadence`.
     @AppStorage("shimmerCadence") var shimmerCadence: ShimmerCadence = .occasionally {
         didSet { guard shimmerCadence != oldValue else { return }; onShimmerChange?(shimmerCadence) }
@@ -90,6 +96,7 @@ final class NocturneController: ObservableObject {
     private init() {
         Self.adoptSystemClockSettingsOnFirstRun()
         overlay.fill = overlayFill
+        overlay.hoverToShow = hoverToShow
     }
 
     // MARK: - First run
