@@ -124,6 +124,16 @@ Those are real captures of one menu bar on macOS 26.3.1, not mockups. The faint
 band at the right of the **Gone** row is the seam described below, left in
 rather than retouched out.
 
+**Hover to show** hands the bar back on demand. Turn it on and the cover drops
+away while the pointer is on the menu bar, then comes back when the pointer
+leaves, so you can read the time by going to look for it rather than by changing
+a setting. Off by default, and offered only in **Gone** and **Hide everything**:
+**Blind** hides the time by writing Control Center's own preference, and undoing
+that costs a Control Center restart, which is far too slow to spend on a hover.
+It costs no permission either, because macOS gates key events behind
+accessibility and leaves mouse events alone. On more than one display only the
+bar you are actually pointing at uncovers.
+
 Settings also exposes the same switches as System Settings under Menu Bar and
 Clock Options, so you can drop just the date, just the day, or just AM/PM without
 touching a mode. The menu bar icon can shimmer on a timer, off by choice, with a

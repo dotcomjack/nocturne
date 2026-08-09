@@ -57,6 +57,10 @@ struct SettingsView: View {
                         goneSection
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
+                    if controller.mode.usesOverlay {
+                        revealSection
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                     iconSection
                     clockOptionsSection
                     generalSection
@@ -141,6 +145,23 @@ struct SettingsView: View {
 
             Note(controller.overlayFill.detail)
             Note("Gone draws a patch over the clock, so it leaves a faint seam. Matching the bar exactly would mean asking for Screen Recording, which Nocturne will not do.")
+        }
+    }
+
+    // MARK: - Reveal
+
+    private var revealSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Reveal", accent: labelAccent)
+
+            VStack(spacing: 0) {
+                SwitchRow("Hover to show", isOn: $controller.hoverToShow)
+            }
+            .tint(accent)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.09)))
+
+            Note("Move the pointer onto the menu bar and the cover drops away, so you can read what is under it. It comes back when the pointer leaves.")
         }
     }
 
