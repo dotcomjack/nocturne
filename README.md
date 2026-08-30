@@ -12,16 +12,23 @@ d o t c o m j a c k
 
 # Nocturne
 
-**Stop your menu bar clock from telling you it is 3am.**
+**Your Focus already silences your phone. Now it silences the clock.**
 
-You are deep in something good. Your eye flicks to the corner out of habit, reads
-`3:14 AM`, and the work is over. Not because you got tired, because you got told.
+You flip Do Not Disturb before a deep block, the way you have a thousand times.
+The phone goes quiet. Notifications stop. Every device you own agrees that you
+are working, and the one thing still talking to you is the clock in the corner
+of your own Mac, which is the interruption nobody ever gave you a switch for.
 
-Nocturne takes the clock away, in one click, and gives it back the same way.
+Nocturne is that switch, and as of 1.3.0 you do not have to touch it. Turn on a
+Focus anywhere in your ecosystem, from your iPhone, from the Watch, from Control
+Center, and your Mac's menu bar goes with it. Turn the Focus off and it comes
+back exactly as it was.
 
 ![The macOS menu bar with a normal clock reading Sat Aug 8 3:14 AM, and below it the same menu bar with the clock replaced by a small analog dial](docs/clock-before-after.png)
 
-macOS 14 or later. No permissions. No private APIs. Around 1,000 lines of Swift.
+macOS 14 or later. No permissions. No private APIs. No account. Around 3,200
+lines of Swift, of which roughly a third is the comments explaining what was
+measured and why.
 
 ---
 
@@ -79,7 +86,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.1.1](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.3.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
 open the disk image, drag it to Applications.
 
 Or with Homebrew:
@@ -133,6 +140,112 @@ that costs a Control Center restart, which is far too slow to spend on a hover.
 It costs no permission either, because macOS gates key events behind
 accessibility and leaves mouse events alone. On more than one display only the
 bar you are actually pointing at uncovers.
+
+## Follow Focus
+
+**Turn on Do Not Disturb on your phone. Your Mac's menu bar goes dark too.**
+
+Focus is already the thing you flip when you want the world to leave you alone,
+and it already syncs across everything signed into your iCloud account. Nocturne
+hooks into it, so the switch you were already pressing now does one more useful
+thing.
+
+It is a **Focus filter**, which means it lives where macOS puts these, not in a
+settings pane of mine. Set it up once:
+
+**System Settings** > **Focus** > pick a Focus > **Add Filter** > **Nocturne** >
+choose a mode.
+
+![The Focus Filters section of System Settings under Do Not Disturb, showing Nocturne's crescent icon next to "Hide everything" and the line "On - Hide the menu bar"](docs/focus-filter.png)
+
+That is the whole setup. Start that Focus and the menu bar goes. End it and the
+mode you were on comes back. Set it on Do Not Disturb only, or on Work and Sleep
+too, whichever ones you actually want it for. It is per Focus, so there is no
+"any Focus / this Focus" switch to get wrong.
+
+**It costs no permission at all.** Not Full Disk Access, not Accessibility, not
+Screen Recording, not a Focus prompt. macOS tells Nocturne when the Focus starts
+and ends, the same way it tells Mail and Safari. Measured, the whole round trip
+from the system recording the Focus to Nocturne's code running is **18ms**.
+
+**It gives the mode back, and it knows when not to.** Nocturne remembers what
+you were on before the Focus started and returns you to it, including across a
+quit or a crash, because the app can be killed while a Focus is running and you
+should still get your own mode back. But if you pick a different mode *by hand*
+while the Focus is on, it leaves your choice alone. An automation that yanks the
+wheel back the second your Focus ends is worse than no automation.
+
+### The two obvious ways to build this are both wrong
+
+This is the part worth reading even if you never install anything.
+
+**Reading `~/Library/DoNotDisturb/DB/Assertions.json` is a trap.** It is the
+answer every search result gives. It is plain JSON, it names the exact Focus,
+and it works perfectly right up until you ship, because that directory is TCC
+protected and reading it needs **Full Disk Access**. The identical binary, in
+two launch contexts on macOS 26.4:
+
+| launched as | `isReadableFile` | `open(O_EVTONLY)` |
+|---|---|---|
+| bare binary from Terminal | `true` | fd 3 |
+| `.app` via `open` | **`false`** | **-1, EPERM** |
+
+and the kernel says so out loud:
+
+```
+System Policy: Nocturne(99186) deny(1) file-read-data
+  /Users/…/Library/DoNotDisturb/DB/Assertions.json
+```
+
+It reads fine from a shell only because Terminal already holds Full Disk Access.
+**That is the same trap this project already documents for `kCGWindowName`**, one
+section up, and I walked straight into it a second time in the same codebase.
+Test it as a real app bundle, not from your shell. A clock utility asking for
+Full Disk Access is absurd, so that route is closed rather than inconvenient.
+
+**`INFocusStatusCenter` costs a permission and then answers too little.** It is
+Apple's public Focus API and it prompts the user. It reports a single optional
+boolean, so it can never tell you *which* Focus is on. And unauthorised it does
+not fail, it lies: measured on 26.4, polling every two seconds while Do Not
+Disturb was genuinely on, it returned `Optional(false)` every single time. A
+silent wrong answer is worse than an error.
+
+### The undocumented part: telling "Focus started" from "Focus ended"
+
+Apple's own dialog promises that "selected apps will be notified when this Focus
+turns on or off", and nothing anywhere says how to tell the two apart. Both
+calls arrive as the same `perform()` with the same parameters. With a
+non-optional parameter they are genuinely indistinguishable:
+
+```swift
+@Parameter(title: "Mode", default: .hideEverything) var mode: FocusFilterMode
+
+Focus ON    perform() mode=hideEverything
+Focus OFF   perform() mode=hideEverything     // identical, useless
+```
+
+Make the parameter **optional** and the difference appears:
+
+```swift
+@Parameter(title: "Mode") var mode: FocusFilterMode?
+
+Focus ON    perform() mode=Optional(hideEverything)
+Focus OFF   perform() mode=nil
+```
+
+`nil` is the deactivation signal, and it is the only one there is. The same rule
+governs `NocturneFocusFilter.current`, which is what makes a pull-based check
+possible at launch and after sleep: with a default value it kept reporting the
+configured mode long after the Focus had ended.
+
+So if you build one of these: **do not give the parameter a default value to
+tidy up the picker.** You lose the ability to detect the Focus ending, your app
+engages on both edges and never releases, and the effect stays on forever.
+
+One more measured thing, since it changes how you have to write `perform()`:
+**macOS calls it more than once per transition.** Two calls 588ms apart for a
+single Do Not Disturb toggle. Whatever you do in there has to be idempotent, or
+one flip of a switch does the work twice.
 
 Settings also exposes the same switches as System Settings under Menu Bar and
 Clock Options, so you can drop just the date, just the day, or just AM/PM without
