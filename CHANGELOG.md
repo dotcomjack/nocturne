@@ -5,6 +5,55 @@ Every release is on the [releases page](https://github.com/dotcomjack/nocturne/r
 with its full notes and a signed, notarized download. This file is the short
 version.
 
+## 1.3.0
+
+### Follow Focus
+
+Nocturne is now a **Focus filter**. Add it under System Settings, Focus, pick a
+Focus, Add Filter, Nocturne, and choose a mode. Turn that Focus on from anywhere
+signed into your iCloud account, including your iPhone, and this Mac's menu bar
+goes with it. End the Focus and the mode you were on comes back.
+
+**It costs no permission.** Not Full Disk Access, not Accessibility, not Screen
+Recording, not a Focus prompt. macOS hands the event to Nocturne the same way it
+hands it to Mail and Safari. Measured, 18ms from the system recording the Focus
+to Nocturne's code running.
+
+**The mode comes back, and it knows when not to.** The pre-Focus mode is
+remembered across a quit or a crash, because the app can be killed while a Focus
+is running. But if you pick a mode by hand while the Focus is on, that choice is
+left alone when the Focus ends.
+
+Three things were measured rather than assumed, and two of them cost a rewrite:
+
+- **`~/Library/DoNotDisturb/DB/Assertions.json` needs Full Disk Access.** It is
+  the answer every search result gives, it names the exact Focus, and the first
+  implementation of this feature used it. It reads perfectly from a shell and
+  fails with `EPERM` from a real `.app`, because Terminal already holds that
+  permission. That is the **same trap this project already documents** for
+  `kCGWindowName` one section up in the README, walked into a second time in the
+  same codebase. Caught before release only because the feature was tested as an
+  installed app rather than from the terminal that built it.
+- **`INFocusStatusCenter` lies when it is not authorised.** Apple's public Focus
+  API prompts for permission, reports one optional boolean so it can never say
+  which Focus is on, and unauthorised it returns `Optional(false)` continuously
+  while Do Not Disturb is genuinely on, rather than failing.
+- **A Focus filter cannot tell "started" from "ended" unless its parameter is
+  optional.** Apple promises the app is notified "when this Focus turns on or
+  off" and never says how to distinguish them. Both arrive as the same
+  `perform()`. With `@Parameter(default:)` they are byte for byte identical.
+  With `@Parameter var mode: FocusFilterMode?` the deactivation arrives as
+  `nil`, and that is the only signal there is. macOS also calls `perform()`
+  twice per transition, 588ms apart, so the handler has to be idempotent.
+
+### Tests
+
+The project had none. It now has a suite: 50 checks over the Follow Focus state
+machine, including a 50,000 operation fuzz pass, run with `./Tests/run.sh` and
+no XCTest target. It was validated by mutation testing rather than by trusting a
+green bar: 10 deliberate defects were introduced one at a time and all 10 were
+caught.
+
 ## 1.2.0
 
 ### Hover to show

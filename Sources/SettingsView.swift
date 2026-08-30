@@ -1,4 +1,5 @@
 // █ dcj · dotcomjack.com · MIT
+import AppKit
 import ServiceManagement
 import SwiftUI
 
@@ -61,6 +62,7 @@ struct SettingsView: View {
                         revealSection
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
+                    focusSection
                     iconSection
                     clockOptionsSection
                     generalSection
@@ -163,6 +165,53 @@ struct SettingsView: View {
 
             Note("Move the pointer onto the menu bar and the cover drops away, so you can read what is under it. It comes back when the pointer leaves.")
         }
+    }
+
+    // MARK: - Focus
+
+    /// What a Focus is currently doing, in one line.
+    ///
+    /// Reads the live state rather than a Nocturne setting, because there is no
+    /// Nocturne setting: the filter is configured in System Settings under
+    /// Focus, and that is the only source of truth. Showing a switch here as
+    /// well would be a second one that can disagree with it.
+    private var focusSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Focus", accent: labelAccent)
+
+            VStack(spacing: 0) {
+                Row {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(controller.activeFocusMode == nil
+                             ? "No Focus is using Nocturne"
+                             : "A Focus is on")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(controller.activeFocusMode.map {
+                                "It has the menu bar set to \($0.title)."
+                             } ?? "Add Nocturne as a Focus filter and your menu bar follows your Focus.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Set Up") { openFocusSettings() }
+                        .controlSize(.small)
+                }
+            }
+            .tint(accent)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.09)))
+
+            Note("Focus follows you across your devices, so turning Do Not Disturb on from your iPhone turns it on here too. Under Focus in System Settings, open a Focus, then Add Filter, then Nocturne, and pick a mode. It costs no permission: Nocturne is a Focus filter, like Mail and Safari, so macOS tells it when a Focus starts and ends.")
+            Note("When the Focus ends, the mode goes back to what it was. Pick a mode yourself while the Focus is on and Nocturne leaves your choice alone.")
+        }
+        .animation(.easeInOut(duration: 0.18), value: controller.activeFocusMode)
+    }
+
+    /// Opens System Settings on the Focus pane.
+    private func openFocusSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Focus-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Menu bar icon

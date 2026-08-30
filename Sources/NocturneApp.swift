@@ -41,12 +41,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return (frame, NocturneController.shared.mode.symbolName)
         }
 
+        // Before `apply()`, not after. Starting the Focus watch can change
+        // the mode (Focus may already be on at login), and doing it first means
+        // the machine settles on the right mode once instead of showing the
+        // saved one and correcting it a beat later.
+        NocturneController.shared.beginFocusWatch()
+
+        installFocusRechecks()
+
         // Re-assert the saved mode at launch. Control Center may have been
         // restarted, the user may have changed things in System Settings, or
         // this may be a fresh login. Whatever the reason, the state on screen
         // should match the state in the menu.
         NocturneController.shared.apply()
         menuBar?.refreshIcon()
+    }
+
+    /// Re-read Focus after the machine has been away.
+    ///
+    /// The watcher's file system sources keep their descriptors across sleep,
+    /// but nothing delivers an event for a change that happened while this
+    /// process was suspended: close the lid in Do Not Disturb, open it two
+    /// hours later with the Focus long over, and the only thing that would
+    /// notice is the 10 second poll. These make it immediate.
+    ///
+    /// Unlock is a distributed notification rather than an `NSWorkspace` one,
+    /// because `sessionDidBecomeActive` covers fast user switching and not the
+    /// lock screen.
+    private func installFocusRechecks() {
+        // `@Sendable` explicitly: both observer APIs take a sendable block, and
+        // letting Swift infer a plain closure here produced a concurrency
+        // warning on every call site rather than one at the declaration.
+        let recheck: @Sendable (Notification) -> Void = { _ in
+            MainActor.assumeIsolated { NocturneController.shared.recheckFocus() }
+        }
+
+        for name in [NSWorkspace.didWakeNotification,
+                     NSWorkspace.screensDidWakeNotification,
+                     NSWorkspace.sessionDidBecomeActiveNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: name, object: nil, queue: .main, using: recheck)
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"),
+            object: nil, queue: .main, using: recheck)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

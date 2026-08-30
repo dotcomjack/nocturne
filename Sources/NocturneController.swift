@@ -28,7 +28,13 @@ final class NocturneController: ObservableObject {
             guard mode != oldValue else { return }
             // Remember the last real mode wherever it was chosen, not just in
             // toggle(), so clicking the icon always returns to what you picked.
-            if mode != .off { preferredMode = mode }
+            //
+            // Except when Follow Focus drove it. Focus switching you to Hide
+            // everything is not you choosing Hide everything, and recording it
+            // would quietly rewrite what the menu bar icon toggles back to:
+            // start on Blind, let one Focus come and go, and clicking the icon
+            // now lands on Hide everything forever.
+            if mode != .off && !isApplyingFocusMode { preferredMode = mode }
             apply()
             onModeChange?()
         }
@@ -45,6 +51,54 @@ final class NocturneController: ObservableObject {
     @AppStorage("hoverToShow") var hoverToShow = false {
         didSet { overlay.hoverToShow = hoverToShow }
     }
+
+    // MARK: - Follow Focus
+
+    /// The mode to come back to when the Focus ends, and whether a Focus is
+    /// currently driving the mode at all.
+    ///
+    /// Persisted rather than held in memory, because the app can be quit or
+    /// killed while a Focus is on. Without this, quitting during a Focus and
+    /// relaunching after it ended would leave the user in Hide everything with
+    /// nothing on screen to explain why.
+    ///
+    /// There is deliberately **no in-app on/off switch** for this feature. The
+    /// filter's presence in System Settings under Focus is the switch, which
+    /// keeps one source of truth instead of two that can disagree. A user who
+    /// has not added the filter never sees any of this happen.
+    @AppStorage("modeBeforeFocus") private var modeBeforeFocusRaw = ""
+    @AppStorage("focusEngaged") private var isFocusEngaged = false
+    @AppStorage("focusTarget") private var focusTargetRaw = ""
+
+    /// The mode the running Focus is asking for, or nil when none is.
+    ///
+    /// Published so the Settings panel can show what is actually configured
+    /// rather than asking the user to remember.
+    @Published private(set) var activeFocusMode: ClockMode?
+
+    /// The state machine, projected onto the three persisted keys above.
+    ///
+    /// A computed property rather than a stored one so there is no third copy
+    /// to keep in step: `@AppStorage` is the storage, `FocusEngagement` is the
+    /// logic, and the two cannot drift apart.
+    private var focusEngagement: FocusEngagement {
+        get {
+            FocusEngagement(isEngaged: isFocusEngaged,
+                            modeBefore: ClockMode(rawValue: modeBeforeFocusRaw),
+                            target: ClockMode(rawValue: focusTargetRaw))
+        }
+        set {
+            isFocusEngaged = newValue.isEngaged
+            modeBeforeFocusRaw = newValue.modeBefore?.rawValue ?? ""
+            focusTargetRaw = newValue.target?.rawValue ?? ""
+        }
+    }
+
+    /// Set while Focus is assigning `mode`, so the assignment can be told apart
+    /// from the user picking a mode. See `mode`'s `didSet`.
+    private var isApplyingFocusMode = false
+
+    private var focusSweep: Timer?
 
     /// How often the menu bar icon sweeps. See `ShimmerCadence`.
     @AppStorage("shimmerCadence") var shimmerCadence: ShimmerCadence = .occasionally {
@@ -313,6 +367,13 @@ final class NocturneController: ObservableObject {
     func restoreOriginalClock() {
         guard let original = originalClock else { return }
 
+        // Explicitly putting the clock back makes any remembered pre-Focus mode
+        // meaningless, so drop it rather than restoring to it later. Without
+        // this, pressing Restore during a Focus and then ending that Focus
+        // would put the clock straight back to where Restore had just been used
+        // to get away from.
+        abandonFocusEngagement()
+
         // `mode` goes through the PROPERTY, never straight to UserDefaults.
         //
         // Writing the raw key leaves `@AppStorage`'s in-memory copy stale: disk
@@ -363,6 +424,77 @@ final class NocturneController: ObservableObject {
 
         objectWillChange.send()
         onModeChange?()
+    }
+
+    // MARK: - Follow Focus engine
+
+    /// Read the live Focus filter state and start the backstop sweep.
+    ///
+    /// Called once at launch, before `apply()`, so a login inside a Focus
+    /// settles on the right mode rather than sitting on the saved one.
+    ///
+    /// The read is asynchronous and cannot honestly be made otherwise: the only
+    /// way to ask is `NocturneFocusFilter.current`, which is `async throws`.
+    /// Blocking the main thread on it at launch to close a window of a few tens
+    /// of milliseconds would be a bad trade. So a login that lands inside a
+    /// Focus can show the saved mode for one frame before correcting.
+    func beginFocusWatch() {
+        FocusFilterBridge.refresh()
+
+        focusSweep?.invalidate()
+        focusSweep = Timer.scheduledTimer(withTimeInterval: FocusFilterBridge.sweepInterval,
+                                          repeats: true) { _ in
+            FocusFilterBridge.refresh()
+        }
+    }
+
+    /// Re-read the filter after the machine has been away. For wake and unlock,
+    /// where a Focus can have started or ended with nothing delivered to a
+    /// process that was suspended.
+    func recheckFocus() {
+        FocusFilterBridge.refresh()
+    }
+
+    /// The single entry point for every Focus transition.
+    ///
+    /// `newMode` is the mode a running Focus wants, or nil when no Focus is
+    /// using Nocturne. Both the push path (`perform()`) and the pull path
+    /// (`FocusFilterBridge.refresh()`) land here, so the same code runs whether
+    /// the news arrived by notification or by polling.
+    ///
+    /// Safe to call repeatedly with the same value: `FocusEngagement` makes
+    /// every operation idempotent, which is what lets the 30 second sweep run
+    /// unconditionally without fighting the push path.
+    func focusFilterChanged(to newMode: ClockMode?) {
+        // Assign only on a real change. This is a `@Published` property and the
+        // backstop sweep calls in every 30 seconds forever, so an unconditional
+        // write would republish an identical value 2,880 times a day and
+        // re-evaluate the Settings view body each time for nothing.
+        if activeFocusMode != newMode { activeFocusMode = newMode }
+
+        var engagement = focusEngagement
+        let next: ClockMode?
+        if let newMode {
+            next = engagement.engage(currentMode: mode, target: newMode)
+        } else {
+            next = engagement.release(currentMode: mode)
+        }
+        focusEngagement = engagement
+
+        if let next { setModeFromFocus(next) }
+    }
+
+    /// Forget the current Focus session without changing the mode.
+    private func abandonFocusEngagement() {
+        var engagement = focusEngagement
+        engagement.abandon()
+        focusEngagement = engagement
+    }
+
+    private func setModeFromFocus(_ newMode: ClockMode) {
+        isApplyingFocusMode = true
+        mode = newMode
+        isApplyingFocusMode = false
     }
 
     // MARK: - Convenience

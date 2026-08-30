@@ -11,3 +11,5 @@ DerivedData/
 
 # Release output from scripts/release.sh
 dist/
+build-signed/
+build.log

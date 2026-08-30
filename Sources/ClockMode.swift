@@ -37,6 +37,14 @@ enum ClockMode: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// The modes Follow Focus is allowed to switch you into.
+    ///
+    /// `off` is excluded on purpose. "When a Focus starts, show the clock" is a
+    /// setting that does nothing for anyone who wanted this feature, and having
+    /// it in the list mostly produces people who picked it by accident and then
+    /// report that Follow Focus is broken.
+    static var focusTargets: [ClockMode] { allCases.filter { $0 != .off } }
+
     var title: String {
         switch self {
         case .off:   return "Clock visible"
