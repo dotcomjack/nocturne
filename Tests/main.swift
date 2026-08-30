@@ -195,6 +195,68 @@ do {
     t.check("release after abandon is a no-op", e.release(currentMode: .naked) == nil)
 }
 
+do {
+    // The defect a code review caught, and the reason `isSuppressed` exists.
+    //
+    // Pressing Restore does not end the Focus. The backstop sweep keeps reading
+    // the same live mode every 30 seconds, and on wake and unlock. Without
+    // suppression the machine sees "not engaged, Focus wants naked" and treats
+    // an hours-old Focus as a brand new activation, silently re-hiding the menu
+    // bar the user just un-hid. For an all-day Do Not Disturb that is every 30
+    // seconds, all day.
+    var e = FocusEngagement()
+    _ = e.engage(currentMode: .blind, target: .naked)
+    e.abandon()                     // user presses Restore, mode goes to .off
+    t.check("suppressed after Restore during a Focus", e.isSuppressed)
+
+    // Ten sweeps while the same Focus is still running.
+    for _ in 0..<10 {
+        t.check("a sweep during a suppressed Focus does not re-engage",
+                e.engage(currentMode: .off, target: .naked) == nil)
+    }
+    t.check("and it never marks itself engaged", !e.isEngaged)
+
+    // The Focus finally ends.
+    t.check("the ending Focus changes nothing", e.release(currentMode: .off) == nil)
+    t.check("and the suppression is spent", !e.isSuppressed)
+
+    // The NEXT Focus must work normally.
+    t.equal("the next Focus engages normally", e.engage(currentMode: .off, target: .naked), .naked)
+    t.equal("and remembers the mode it found", e.modeBefore, .off)
+}
+
+do {
+    // Restore with no Focus running must not deafen us to the next one.
+    var e = FocusEngagement()
+    e.abandon()
+    t.check("abandon with nothing engaged does not suppress", !e.isSuppressed)
+    t.equal("so the next Focus still engages", e.engage(currentMode: .blind, target: .naked), .naked)
+}
+
+do {
+    // Restore pressed twice during one Focus must not clear its own suppression.
+    var e = FocusEngagement()
+    _ = e.engage(currentMode: .blind, target: .naked)
+    e.abandon()
+    e.abandon()
+    t.check("a second Restore keeps the suppression", e.isSuppressed)
+    t.check("still suppressed against the sweep", e.engage(currentMode: .off, target: .naked) == nil)
+}
+
+do {
+    // Suppression has to survive a quit, or a relaunch inside the same Focus
+    // undoes Restore just as surely as a sweep would.
+    var e = FocusEngagement()
+    _ = e.engage(currentMode: .blind, target: .naked)
+    e.abandon()
+    var revived = FocusEngagement(isEngaged: e.isEngaged,
+                                  modeBefore: e.modeBefore,
+                                  isSuppressed: e.isSuppressed,
+                                  target: e.target)
+    t.check("suppression survives a quit", revived.isSuppressed)
+    t.check("and still holds after relaunch", revived.engage(currentMode: .off, target: .naked) == nil)
+}
+
 // MARK: - 7. Surviving a quit
 //
 // The three fields are persisted, so a quit and relaunch is exactly a
@@ -204,10 +266,12 @@ print("== persistence ==")
 
 func roundTrip(_ e: FocusEngagement) -> FocusEngagement {
     let engagedRaw = e.isEngaged
+    let suppressedRaw = e.isSuppressed
     let beforeRaw = e.modeBefore?.rawValue ?? ""
     let targetRaw = e.target?.rawValue ?? ""
     return FocusEngagement(isEngaged: engagedRaw,
                            modeBefore: ClockMode(rawValue: beforeRaw),
+                           isSuppressed: suppressedRaw,
                            target: ClockMode(rawValue: targetRaw))
 }
 
@@ -279,6 +343,7 @@ do {
     var rng = SystemRandomNumberGenerator()
     var illegal = 0
     var releasedButHolding = 0
+    var suppressedWhileEngaged = 0
     for _ in 0..<50_000 {
         switch Int.random(in: 0..<6, using: &rng) {
         case 0:
@@ -298,9 +363,16 @@ do {
         }
         if e.isEngaged && (e.modeBefore == nil || e.target == nil) { illegal += 1 }
         if !e.isEngaged && (e.modeBefore != nil || e.target != nil) { releasedButHolding += 1 }
+        if e.isEngaged && e.isSuppressed { suppressedWhileEngaged += 1 }
     }
     t.equal("50,000 random operations never engage with nothing saved", illegal, 0)
     t.equal("50,000 random operations never hold state while released", releasedButHolding, 0)
+    t.equal("50,000 random operations are never suppressed and engaged at once", suppressedWhileEngaged, 0)
+
+    // A suppression must always be escapable, or Follow Focus is dead for good.
+    var stuck = e
+    _ = stuck.release(currentMode: .blind)
+    t.check("a release always clears suppression, whatever the history", !stuck.isSuppressed)
 }
 
 do {

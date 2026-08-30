@@ -25,6 +25,23 @@ struct FocusEngagement: Equatable {
     /// The mode to come back to when the Focus ends. Nil when nothing is saved.
     var modeBefore: ClockMode?
 
+    /// True when the user has explicitly opted out of the Focus that is
+    /// *currently running*, by pressing "Restore clock to how it was".
+    ///
+    /// Without this, Restore is undone within 30 seconds and the user is never
+    /// told why. `abandon()` clears `isEngaged`, but the Focus itself is still
+    /// on, so the next backstop sweep reads the same live mode, sees nothing
+    /// engaged, and treats a Focus that has been running for hours as a brand
+    /// new activation. It re-hides the menu bar the user just un-hid. Sleeping
+    /// or locking the screen brings it back even sooner, since those force a
+    /// re-read.
+    ///
+    /// So the state machine has to remember that this particular Focus was
+    /// offered and declined. The suppression is spent the moment the Focus
+    /// genuinely ends, which is what `release` clears, so the *next* Focus
+    /// engages normally.
+    var isSuppressed = false
+
     /// The mode this engagement put on screen.
     ///
     /// Held here rather than read back from settings because the Focus filter's
@@ -41,6 +58,9 @@ struct FocusEngagement: Equatable {
     /// Re-engaging would overwrite `modeBefore` with the Focus mode itself, and
     /// the user's own mode would be gone for good.
     mutating func engage(currentMode: ClockMode, target newTarget: ClockMode) -> ClockMode? {
+        // The user turned this Focus's effect off by hand. Stay out of the way
+        // until it actually ends.
+        guard !isSuppressed else { return nil }
         guard !isEngaged else { return retarget(currentMode: currentMode, to: newTarget) }
         isEngaged = true
         modeBefore = currentMode
@@ -55,6 +75,12 @@ struct FocusEngagement: Equatable {
     /// wheel, and yanking it away the moment their Focus ends is the single
     /// most irritating thing an automation like this can do.
     mutating func release(currentMode: ClockMode) -> ClockMode? {
+        // Cleared before the guard, not after. When the user has suppressed the
+        // running Focus, `isEngaged` is already false, so a `guard` that
+        // returned first would leave the suppression set forever and every
+        // later Focus would be ignored.
+        isSuppressed = false
+
         guard isEngaged else { return nil }
         isEngaged = false
 
@@ -90,6 +116,12 @@ struct FocusEngagement: Equatable {
     /// Restore during a Focus and then letting that Focus end would put the
     /// clock straight back to what Restore was just used to get away from.
     mutating func abandon() {
+        // Suppress only when a Focus is actually driving right now. Pressing
+        // Restore with no Focus running must not deafen us to the next one.
+        // Written as an OR rather than an assignment so that pressing Restore
+        // twice during one Focus does not clear the suppression the first press
+        // established.
+        if isEngaged { isSuppressed = true }
         isEngaged = false
         modeBefore = nil
         target = nil
