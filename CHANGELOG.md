@@ -46,13 +46,34 @@ Three things were measured rather than assumed, and two of them cost a rewrite:
   `nil`, and that is the only signal there is. macOS also calls `perform()`
   twice per transition, 588ms apart, so the handler has to be idempotent.
 
+### One defect the review caught, worth naming
+
+"Restore clock to how it was" used to be undone within 30 seconds, and the first
+round of tests did not catch it.
+
+Restore ends Nocturne's *engagement* with the running Focus, but it does not end
+the Focus. The backstop sweep kept reading the same live Focus every 30 seconds,
+found nothing engaged, and could not tell an hours-old Do Not Disturb from a
+brand new one. So it re-hid the menu bar the user had just explicitly un-hidden,
+over and over, for as long as the Focus ran. Sleep or a screen unlock brought it
+back sooner still.
+
+The state machine now records that *this* Focus was offered and declined, and
+the suppression is spent the moment the Focus genuinely ends, so the next one
+engages normally.
+
+Worth stating plainly: the whole test suite passed while this bug existed,
+because the bug lived in the seam between the state machine and the controller
+that feeds it, and every test pointed at the state machine alone. A green suite
+is evidence about what you thought to check.
+
 ### Tests
 
-The project had none. It now has a suite: 50 checks over the Follow Focus state
+The project had none. It now has a suite: 74 checks over the Follow Focus state
 machine, including a 50,000 operation fuzz pass, run with `./Tests/run.sh` and
 no XCTest target. It was validated by mutation testing rather than by trusting a
-green bar: 10 deliberate defects were introduced one at a time and all 10 were
-caught.
+green bar: 16 deliberate defects were introduced one at a time and all 16 were
+caught, including a re-run of the Restore defect above.
 
 ## 1.2.0
 

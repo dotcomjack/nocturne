@@ -69,6 +69,7 @@ final class NocturneController: ObservableObject {
     @AppStorage("modeBeforeFocus") private var modeBeforeFocusRaw = ""
     @AppStorage("focusEngaged") private var isFocusEngaged = false
     @AppStorage("focusTarget") private var focusTargetRaw = ""
+    @AppStorage("focusSuppressed") private var isFocusSuppressed = false
 
     /// The mode the running Focus is asking for, or nil when none is.
     ///
@@ -85,10 +86,12 @@ final class NocturneController: ObservableObject {
         get {
             FocusEngagement(isEngaged: isFocusEngaged,
                             modeBefore: ClockMode(rawValue: modeBeforeFocusRaw),
+                            isSuppressed: isFocusSuppressed,
                             target: ClockMode(rawValue: focusTargetRaw))
         }
         set {
             isFocusEngaged = newValue.isEngaged
+            isFocusSuppressed = newValue.isSuppressed
             modeBeforeFocusRaw = newValue.modeBefore?.rawValue ?? ""
             focusTargetRaw = newValue.target?.rawValue ?? ""
         }
@@ -479,7 +482,11 @@ final class NocturneController: ObservableObject {
         } else {
             next = engagement.release(currentMode: mode)
         }
-        focusEngagement = engagement
+        // Same reasoning as the guard above, and it matters more here: the
+        // setter writes three separate `@AppStorage` keys, and this function is
+        // called by the backstop sweep every 30 seconds for the life of the
+        // app, including for users who never configured the filter at all.
+        if engagement != focusEngagement { focusEngagement = engagement }
 
         if let next { setModeFromFocus(next) }
     }
