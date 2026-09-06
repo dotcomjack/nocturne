@@ -86,7 +86,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.4.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.4.1](https://github.com/dotcomjack/nocturne/releases/latest)**,
 open the disk image, drag it to Applications.
 
 Or with Homebrew:
@@ -367,7 +367,7 @@ That is the entire undo, and it needs no app installed to work.
 ## What it does not do
 
 - It does not *manage* other menu bar items. Hide everything and Only the clock blank the whole bar, but if you want per-icon control, ordering and hidden sections, that is [Ice](https://github.com/jordanbaird/Ice), which is excellent and does it properly.
-- It does not cover a display whose current Space is a full-screen app. The strip is built with `fullScreenNone` so it never floats over a video, so if you have the menu bar set to stay visible in full screen, that display's bar stays uncovered in every covering mode. Measured with Safari full screen on an external display: the strip exists at alpha 1 and the window server reports it off screen.
+- It does not cover a display whose current Space is a full-screen app unless the menu bar is set to stay visible there. With the default setting the bar slides away in full screen and there is nothing to cover, so the strip stays out of that Space on purpose and never floats over a video. Set the bar to stay (Never, or On Desktop Only) and that display is covered like any other, measured with Safari full screen on an external panel.
 - It does not use private APIs, so it will not break on a macOS update.
 - It does not ask for Accessibility or Screen Recording.
 - It does not phone home, and there is nothing to phone home about.

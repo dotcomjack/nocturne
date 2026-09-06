@@ -108,6 +108,38 @@ final class OverlayController {
 
     private var windows: [NSWindow] = []
     private var beaconWindow: NSWindow?
+
+    /// Whether the strip may follow the bar into a full-screen Space.
+    ///
+    /// macOS can keep the menu bar on screen in full screen, with
+    /// "Automatically hide and show the menu bar" set to Never or On Desktop
+    /// Only, and then a display running a full-screen app still has a bar to
+    /// cover. The windows join a full-screen Space only in that case. On the
+    /// default setting the bar slides away and there is nothing to cover, so
+    /// they stay out on purpose: a strip that joined regardless would linger
+    /// over the top edge of a video for up to one 2s poll after the bar hid.
+    ///
+    /// Measured on 26.6.2 with Safari full screen on an external display and
+    /// the bar set to stay: before this, the strip existed at alpha 1 and the
+    /// window server reported it off screen, because it lacked
+    /// `fullScreenAuxiliary`. Read from the same global domain System Settings
+    /// writes, which costs no permission, and rechecked on every `sync()` so a
+    /// change in the setting rebuilds the windows rather than waiting for a
+    /// relaunch.
+    private var joinsFullScreenSpaces = false
+    private var builtForFullScreen: Bool?
+
+    private static func menuBarStaysVisibleInFullScreen() -> Bool {
+        let value = CFPreferencesCopyAppValue("AppleMenuBarVisibleInFullscreen" as CFString,
+                                              kCFPreferencesAnyApplication)
+        return (value as? NSNumber)?.boolValue ?? false
+    }
+
+    private static func collectionBehavior(joiningFullScreen joins: Bool) -> NSWindow.CollectionBehavior {
+        var behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        behavior.insert(joins ? .fullScreenAuxiliary : .fullScreenNone)
+        return behavior
+    }
     private var currentBeaconSymbol: String?
     private var tracker: Timer?
     private(set) var isActive = false
@@ -211,6 +243,13 @@ final class OverlayController {
             return
         }
 
+        // The full-screen behaviour is baked into each window at creation, so
+        // a change in the System Settings switch means a rebuild, not a sync.
+        joinsFullScreenSpaces = Self.menuBarStaysVisibleInFullScreen()
+        if let builtForFullScreen, builtForFullScreen != joinsFullScreenSpaces {
+            teardown()
+        }
+
         // Decide about the beacon BEFORE placing anything.
         //
         // Blanking the whole bar hides the one control that turns it back on,
@@ -225,6 +264,7 @@ final class OverlayController {
         if windows.count != rects.count {
             teardown()
             windows = rects.map { makeWindow(frame: $0) }
+            builtForFullScreen = joinsFullScreenSpaces
         } else {
             for (window, rect) in zip(windows, rects) where window.frame != rect {
                 window.setFrame(rect, display: false)
@@ -398,7 +438,7 @@ final class OverlayController {
         window.hasShadow = false
         window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+        window.collectionBehavior = Self.collectionBehavior(joiningFullScreen: joinsFullScreenSpaces)
 
         let view = NSImageView()
         view.imageScaling = .scaleProportionallyDown
@@ -439,6 +479,7 @@ final class OverlayController {
         beaconWindow?.orderOut(nil)
         beaconWindow = nil
         currentBeaconSymbol = nil
+        builtForFullScreen = nil
     }
 
     // MARK: - Window construction
@@ -461,7 +502,7 @@ final class OverlayController {
         window.hasShadow = false
         window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenNone]
+        window.collectionBehavior = Self.collectionBehavior(joiningFullScreen: joinsFullScreenSpaces)
         window.alphaValue = peekAlpha(for: frame)   // see makeBeaconWindow
         window.contentView = makeContentView()
         window.setFrame(frame, display: false)

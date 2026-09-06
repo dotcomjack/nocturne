@@ -5,6 +5,28 @@ Every release is on the [releases page](https://github.com/dotcomjack/nocturne/r
 with its full notes and a signed, notarized download. This file is the short
 version.
 
+## 1.4.1
+
+### The full-screen display gets covered too
+
+The limit 1.4.0 wrote down is closed. A display whose current Space is a
+full-screen app is now covered, in every covering mode, **when the menu bar is
+set to stay visible in full screen** (System Settings, Desktop & Dock,
+"Automatically hide and show the menu bar" on Never or On Desktop Only).
+
+That condition is the whole fix and it is deliberate. On the default setting
+the bar slides away in full screen and there is nothing to cover, so the strip
+stays out of that Space, as before: a strip that joined regardless would linger
+over the top edge of a video for up to one 2s poll after the bar hid. The
+setting is read from the same global domain System Settings writes, which costs
+no permission, and it is rechecked on every placement pass so flipping it
+rebuilds the strip without a relaunch.
+
+Measured on macOS 26.6.2, two displays, Safari full screen on the external
+panel, bar set to stay: before, the external strip existed at alpha 1 and the
+window server reported it off screen. After, it is on screen and the bar is
+covered. The MacBook display, not in full screen, is unchanged.
+
 ## 1.4.0
 
 ### Only the clock
