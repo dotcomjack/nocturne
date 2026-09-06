@@ -12,6 +12,7 @@ enum FocusFilterMode: String, AppEnum {
     case blind
     case gone
     case hideEverything
+    case onlyTheClock
 
     static var typeDisplayRepresentation: TypeDisplayRepresentation { "Nocturne mode" }
 
@@ -22,6 +23,8 @@ enum FocusFilterMode: String, AppEnum {
                                      subtitle: "Just the clock, covered."),
         .hideEverything: DisplayRepresentation(title: "Hide everything",
                                                subtitle: "The whole menu bar goes blank."),
+        .onlyTheClock: DisplayRepresentation(title: "Only the clock",
+                                             subtitle: "Everything but the clock goes blank."),
     ] }
 
     var clockMode: ClockMode {
@@ -29,6 +32,7 @@ enum FocusFilterMode: String, AppEnum {
         case .blind: return .blind
         case .gone: return .gone
         case .hideEverything: return .naked
+        case .onlyTheClock: return .clockOnly
         }
     }
 }
@@ -105,7 +109,7 @@ struct NocturneFocusFilter: SetFocusFilterIntent {
     static var title: LocalizedStringResource = "Hide the menu bar"
 
     static var description: IntentDescription? = IntentDescription(
-        "Put the menu bar clock away while this Focus is on, and bring it back when the Focus ends.")
+        "Put the menu bar away while this Focus is on, and bring it back when the Focus ends.")
 
     /// Optional, load-bearing. See the type comment: `nil` is how the Focus
     /// ending is detected. There is no other signal.

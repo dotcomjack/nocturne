@@ -115,13 +115,37 @@ enum ClockWindowLocator {
 
         return items.compactMap { index, itemRects in
             guard index < screens.count else { return nil }
-            let screen = screens[index]
-            let height = barHeight(for: screen, items: itemRects)
-            return CGRect(x: screen.frame.minX,
-                          y: screen.frame.maxY - height,
-                          width: screen.frame.width,
-                          height: height)
+            return barRect(for: screens[index], items: itemRects)
         }
+    }
+
+    /// The menu bar minus its clock, one strip per bar, for Only the clock.
+    ///
+    /// Same gate as `menuBarRects()`: a screen Control Center is not drawing
+    /// into has no bar showing, so it gets no strip. And the clock is the same
+    /// right-most item `rects()` returns, so the two can never disagree about
+    /// where it is. The arithmetic lives in `MenuBarGeometry` where it can be
+    /// tested without a window server.
+    static func menuBarRectsExcludingClock() -> [CGRect] {
+        let items = itemsByScreen()
+        let screens = NSScreen.screens
+
+        return items.compactMap { index, itemRects in
+            guard index < screens.count,
+                  let clock = itemRects.max(by: { $0.maxX < $1.maxX })
+            else { return nil }
+            return MenuBarGeometry.barExcludingClock(bar: barRect(for: screens[index], items: itemRects),
+                                                     clock: cocoaRect(fromQuartz: clock))
+        }
+    }
+
+    /// The full strip of a screen's menu bar, in Cocoa coordinates.
+    private static func barRect(for screen: NSScreen, items: [CGRect]) -> CGRect {
+        let height = barHeight(for: screen, items: items)
+        return CGRect(x: screen.frame.minX,
+                      y: screen.frame.maxY - height,
+                      width: screen.frame.width,
+                      height: height)
     }
 
     /// Menu bar thickness for a screen.

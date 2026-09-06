@@ -1,7 +1,8 @@
 // █ dcj · dotcomjack.com · MIT
 import AppKit
 
-/// Draws an opaque strip over Control Center's clock.
+/// Draws an opaque strip over Control Center's clock, over the whole menu bar,
+/// or over the whole menu bar up to the clock.
 ///
 /// This is the experimental half of Nocturne. It has to keep re-finding the
 /// clock, because the menu bar reflows whenever an item appears, a display is
@@ -62,19 +63,12 @@ final class OverlayController {
         }
     }
 
-    /// How much of the menu bar the strip covers.
-    enum Coverage {
-        /// Just Control Center's clock.
-        case clock
-        /// The entire bar, on every screen.
-        case entireBar
-    }
-
     var fill: Fill = .material {
         didSet { guard fill != oldValue else { return }; rebuild() }
     }
 
-    var coverage: Coverage = .clock {
+    /// How much of the menu bar the strip covers. See `MenuBarCoverage`.
+    var coverage: MenuBarCoverage = .clock {
         didSet { guard coverage != oldValue else { return }; rebuild() }
     }
 
@@ -208,6 +202,8 @@ final class OverlayController {
             rects = ClockWindowLocator.rects()
         case .entireBar:
             rects = ClockWindowLocator.menuBarRects()
+        case .barExceptClock:
+            rects = ClockWindowLocator.menuBarRectsExcludingClock()
         }
 
         guard !rects.isEmpty else {
@@ -221,7 +217,7 @@ final class OverlayController {
         // so the glyph has to be real. Checking it after placing meant the
         // windows were created and then torn down on the same pass, which on a
         // repeating 2s tracker is a strip that flashes on and off forever.
-        if coverage == .entireBar, !beaconIsReal {
+        if coverage.blanksBar, !beaconIsReal {
             teardown()
             return
         }
@@ -263,7 +259,10 @@ final class OverlayController {
             return
         }
         // In `.entireBar` the strips already are the menu bars, so reuse them
-        // rather than paying for a second window list read every 2s.
+        // rather than paying for a second window list read every 2s. The other
+        // two cover less than the bar, and the band has to be the whole bar:
+        // for `.barExceptClock` that is what lets a pointer resting on the
+        // clock, the one part not covered, still drop the strip beside it.
         hoverBands = (coverage == .entireBar)
             ? windows.map(\.frame)
             : ClockWindowLocator.menuBarRects()
@@ -338,10 +337,6 @@ final class OverlayController {
 
     // MARK: - Beacon
 
-    /// Redraws our own glyph above the strip so the way out stays visible.
-    ///
-    /// Only for `.entireBar`. In `.clock` coverage the bar is untouched and the
-    /// real status item is already showing.
     /// Whether our status item is genuinely drawn where AppKit claims it is.
     ///
     /// AppKit reports a plausible on-bar frame for a status item macOS has
@@ -360,8 +355,13 @@ final class OverlayController {
         return ClockWindowLocator.hasMenuBarItem(at: spec.frame)
     }
 
+    /// Redraws our own glyph above the strip so the way out stays visible.
+    ///
+    /// Only for the coverages that blank the bar, `.entireBar` and
+    /// `.barExceptClock`. In `.clock` coverage the bar is untouched and the
+    /// real status item is already showing.
     private func syncBeacon() {
-        guard coverage == .entireBar, !windows.isEmpty, let spec = beacon?(), beaconIsReal else {
+        guard coverage.blanksBar, !windows.isEmpty, let spec = beacon?(), beaconIsReal else {
             beaconWindow?.orderOut(nil)
             beaconWindow = nil
             return

@@ -54,8 +54,8 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     modeSection
-                    if controller.mode == .gone {
-                        goneSection
+                    if controller.mode.hasSeam {
+                        coverSection
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                     if controller.mode.usesOverlay {
@@ -70,7 +70,8 @@ struct SettingsView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 18)
                 .padding(.bottom, 22)
-                // Sections slide rather than pop when Gone appears or leaves.
+                // Sections slide rather than pop when a mode's own section
+                // appears or leaves.
                 .animation(.easeInOut(duration: 0.18), value: controller.mode)
             }
         }
@@ -131,9 +132,15 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Gone
+    // MARK: - Cover
 
-    private var goneSection: some View {
+    /// The fill picker, for the two modes whose strip has an edge to match.
+    ///
+    /// Hide everything does not get it: its strip spans the bar, so there is no
+    /// neighbour to mismatch and the fill is invisible. Gone has a patch with
+    /// the bar on both sides. Only the clock has one seam, where the strip
+    /// stops at the clock.
+    private var coverSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel("Cover", accent: labelAccent)
 
@@ -146,7 +153,9 @@ struct SettingsView: View {
             .labelsHidden()
 
             Note(controller.overlayFill.detail)
-            Note("Gone draws a patch over the clock, so it leaves a faint seam. Matching the bar exactly would mean asking for Screen Recording, which Nocturne will not do.")
+            Note(controller.mode == .clockOnly
+                 ? "Only the clock stops the strip at the clock's left edge, so it leaves one faint seam there. Matching the bar exactly would mean asking for Screen Recording, which Nocturne will not do."
+                 : "Gone draws a patch over the clock, so it leaves a faint seam. Matching the bar exactly would mean asking for Screen Recording, which Nocturne will not do.")
         }
     }
 
