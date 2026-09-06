@@ -26,7 +26,7 @@ back exactly as it was.
 
 ![The macOS menu bar with a normal clock reading Sat Aug 8 3:14 AM, and below it the same menu bar with the clock replaced by a small analog dial](docs/clock-before-after.png)
 
-macOS 14 or later. No permissions. No private APIs. No account. Around 3,200
+macOS 14 or later. No permissions. No private APIs. No account. Around 3,500
 lines of Swift, of which roughly a third is the comments explaining what was
 measured and why.
 
@@ -86,7 +86,7 @@ bundle, not from your shell.
 
 ## Install
 
-**[Download Nocturne 1.3.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
+**[Download Nocturne 1.4.0](https://github.com/dotcomjack/nocturne/releases/latest)**,
 open the disk image, drag it to Applications.
 
 Or with Homebrew:
@@ -116,9 +116,9 @@ xcodegen`) and Xcode.
 The menu bar icon is the whole interface. **Click it** for modes, settings and
 quit, the same as every other menu bar app.
 
-Four modes:
+Five modes:
 
-![The same strip of the macOS menu bar in each of Nocturne's four modes: Clock visible showing Sat Aug 8 6:29 PM, Blind showing a small analog dial in its place, Gone with the clock patched over, and Hide everything with the whole bar blank except Nocturne's own moon icon](docs/modes/nocturne-modes.png)
+![The same strip of the macOS menu bar in each of Nocturne's five modes: Clock visible showing the date and time, Blind showing a small analog dial in its place, Gone with the clock patched over, Hide everything with the whole bar blank except Nocturne's own moon icon, and Only the clock with the whole bar blank except the clock and that icon](docs/modes/nocturne-modes.png)
 
 | Mode | What it does |
 |---|---|
@@ -126,16 +126,18 @@ Four modes:
 | **Blind** *(default)* | Analog dial. The time is there, you just cannot read it. |
 | **Gone** | A patch drawn over just the clock. Experimental, see below. |
 | **Hide everything** | The whole menu bar goes blank, except Nocturne's own icon. Clicks still work, you just cannot read it. |
+| **Only the clock** | Everything but the clock goes blank. Hide everything turned inside out, for whoever's problem is the icons rather than the time. |
 
-Those are real captures of one menu bar on macOS 26.3.1, not mockups. The faint
+Those are real captures of one menu bar on macOS 26.6.2, not mockups. The faint
 band at the right of the **Gone** row is the seam described below, left in
 rather than retouched out.
 
 **Hover to show** hands the bar back on demand. Turn it on and the cover drops
 away while the pointer is on the menu bar, then comes back when the pointer
 leaves, so you can read the time by going to look for it rather than by changing
-a setting. Off by default, and offered only in **Gone** and **Hide everything**:
-**Blind** hides the time by writing Control Center's own preference, and undoing
+a setting. Off by default, and offered only in **Gone**, **Hide everything** and
+**Only the clock**: **Blind** hides the time by writing Control Center's own
+preference, and undoing
 that costs a Control Center restart, which is far too slow to spend on a hover.
 It costs no permission either, because macOS gates key events behind
 accessibility and leaves mouse events alone. On more than one display only the
@@ -310,6 +312,32 @@ patch over the *whole* bar has none: its only edge is the bar's own bottom edge,
 which is already a boundary. So the mode that covers the most is the one that
 looks cleanest.
 
+## Only the clock
+
+**Hide everything turned inside out.** The strip runs from the bar's left edge
+to the clock's left edge and stops, so every icon goes and the time stays
+exactly as readable as it was. It is for the person whose problem is the twenty
+icons rather than the clock, and it is offered everywhere the other modes are,
+including the Focus filter picker, so a Focus can put every icon away and leave
+the time.
+
+**Nothing is drawn to the right of the clock, because there is nothing there.**
+Measured on macOS 26.6.2, the clock's window runs to the screen edge on a
+notched MacBook (x=1588 and 142pt wide on a 1728pt screen, so it overhangs by
+2pt) and sits flush on an external display. A second strip there would be a
+dark sliver beside the clock with nothing under it, which reads as a bug.
+
+**It leaves exactly one seam**, the vertical edge where the strip stops at the
+clock, so Settings offers the fill picker for it as it does for Gone. And it is
+the one covering mode that leaves `IsAnalog` alone, because the clock has to
+stay readable: coming to it from Blind, Gone or Hide everything puts the digital
+clock back and waits for Control Center to settle before the strip goes up,
+on the same path the analog swap already used.
+
+The arithmetic is twenty lines in `MenuBarGeometry`, Foundation-only so the
+test suite can fuzz it without a window server: 20,000 random bar and clock
+layouts, and the strip never reaches the clock and never leaves the bar.
+
 ## Getting your clock back
 
 **Nocturne adopts your existing Clock Options the first time it runs.** It reads
@@ -338,7 +366,8 @@ That is the entire undo, and it needs no app installed to work.
 
 ## What it does not do
 
-- It does not *manage* other menu bar items. Hide everything blanks the whole bar, but if you want per-icon control, ordering and hidden sections, that is [Ice](https://github.com/jordanbaird/Ice), which is excellent and does it properly.
+- It does not *manage* other menu bar items. Hide everything and Only the clock blank the whole bar, but if you want per-icon control, ordering and hidden sections, that is [Ice](https://github.com/jordanbaird/Ice), which is excellent and does it properly.
+- It does not cover a display whose current Space is a full-screen app. The strip is built with `fullScreenNone` so it never floats over a video, so if you have the menu bar set to stay visible in full screen, that display's bar stays uncovered in every covering mode. Measured with Safari full screen on an external display: the strip exists at alpha 1 and the window server reports it off screen.
 - It does not use private APIs, so it will not break on a macOS update.
 - It does not ask for Accessibility or Screen Recording.
 - It does not phone home, and there is nothing to phone home about.

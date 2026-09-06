@@ -13,6 +13,12 @@
 //   whole decision-making half of the feature and none of its interesting
 //   orderings (engage twice, release after the user takes over, retarget
 //   mid-Focus, quit and relaunch) are reachable by hand in useful time.
+// - `ClockMode` is pinned: what each mode asks of the clock and of the overlay
+//   is asserted per mode, so a new case cannot inherit the wrong answer from a
+//   default branch.
+// - `MenuBarGeometry` is covered, including a fuzz pass. It is the arithmetic
+//   behind Only the clock, and the one property that matters, that the strip
+//   never reaches the clock, is cheap to prove and expensive to eyeball.
 // - `NocturneFocusFilter` is NOT unit tested and cannot usefully be. Its
 //   behaviour is entirely "what does macOS pass to `perform()`", which is a
 //   property of the system, not of this code. It was established by measurement
@@ -62,10 +68,37 @@ let t = Harness()
 
 print("== modes ==")
 
-t.equal("Focus can select three modes", ClockMode.focusTargets.count, 3)
+t.equal("Focus can select four modes", ClockMode.focusTargets.count, 4)
 t.check("Focus can never select Clock visible", !ClockMode.focusTargets.contains(.off))
 t.check("every non-off mode is selectable",
-        Set(ClockMode.focusTargets) == Set([.blind, .gone, .naked]))
+        Set(ClockMode.focusTargets) == Set([.blind, .gone, .naked, .clockOnly]))
+
+// What each mode asks of the system, stated once per mode. A `default:` branch
+// in the app would let a new case inherit the wrong answer silently; the
+// switches there are exhaustive and these pin the answers.
+t.check("Clock visible touches nothing",
+        !ClockMode.off.wantsAnalogClock && ClockMode.off.coverage == nil)
+t.check("Blind is the analog swap and nothing else",
+        ClockMode.blind.wantsAnalogClock && ClockMode.blind.coverage == nil)
+t.check("Gone shrinks the clock, then covers it",
+        ClockMode.gone.wantsAnalogClock && ClockMode.gone.coverage == .clock)
+t.check("Hide everything shrinks the clock, then covers the bar",
+        ClockMode.naked.wantsAnalogClock && ClockMode.naked.coverage == .entireBar)
+t.check("Only the clock leaves the clock digital", !ClockMode.clockOnly.wantsAnalogClock)
+t.check("Only the clock covers the bar and stops at the clock",
+        ClockMode.clockOnly.coverage == .barExceptClock)
+t.check("usesOverlay means exactly 'has something to cover'",
+        ClockMode.allCases.allSatisfy { $0.usesOverlay == ($0.coverage != nil) })
+t.check("the two modes that blank the bar are the two that draw a beacon",
+        ClockMode.allCases.filter { $0.coverage?.blanksBar == true } == [.naked, .clockOnly])
+t.check("only the two partial covers admit to a seam",
+        ClockMode.allCases.filter(\.hasSeam) == [.gone, .clockOnly])
+t.equal("every mode has its own glyph",
+        Set(ClockMode.allCases.map(\.symbolName)).count, ClockMode.allCases.count)
+t.equal("every mode has its own title",
+        Set(ClockMode.allCases.map(\.title)).count, ClockMode.allCases.count)
+t.check("every mode survives a round trip through its stored form",
+        ClockMode.allCases.allSatisfy { ClockMode(rawValue: $0.rawValue) == $0 })
 
 // MARK: - 2. The straight line
 
@@ -396,6 +429,78 @@ do {
         e.abandon()
     }
     t.equal("release never invents a mode the user was not already on", invented, 0)
+}
+
+// MARK: - 9. Only the clock: the strip that stops at the clock
+//
+// Pure arithmetic on two rects, pulled out of the locator so it can be checked
+// without a window server. The numbers are the ones measured on macOS 26.6.2.
+
+print("== geometry ==")
+
+do {
+    // The MacBook bar: 1728pt wide, 33pt tall, clock at x=1588 and 142pt
+    // wide, which runs 2pt past the screen edge. So there is nothing to the
+    // right of the clock, and the strip is everything to its left.
+    let bar = CGRect(x: 0, y: 1084, width: 1728, height: 33)
+    let clock = CGRect(x: 1588, y: 1084, width: 142, height: 33)
+    let strip = MenuBarGeometry.barExcludingClock(bar: bar, clock: clock)
+    t.equal("the strip starts at the bar's left edge", strip?.minX, 0)
+    t.equal("and stops exactly at the clock", strip?.maxX, 1588)
+    t.equal("full bar height", strip?.height, 33)
+    t.equal("same baseline as the bar", strip?.minY, 1084)
+}
+
+do {
+    // The external display: origin is not zero, bar is 30pt, clock ends flush
+    // with the screen edge.
+    let bar = CGRect(x: 121, y: 2527, width: 2560, height: 30)
+    let clock = CGRect(x: 2539, y: 2527, width: 142, height: 30)
+    let strip = MenuBarGeometry.barExcludingClock(bar: bar, clock: clock)
+    t.equal("a bar with a non-zero origin keeps it", strip?.minX, 121)
+    t.equal("and still stops at the clock", strip?.maxX, 2539)
+    t.equal("width is measured from the bar's own origin", strip?.width, 2418)
+    t.equal("the shorter bar keeps its own height", strip?.height, 30)
+}
+
+do {
+    let bar = CGRect(x: 0, y: 1084, width: 1728, height: 33)
+    t.check("a clock on another screen produces no strip",
+            MenuBarGeometry.barExcludingClock(bar: bar, clock: CGRect(x: 2539, y: 2527, width: 142, height: 30)) == nil)
+    t.check("a clock below the bar produces no strip",
+            MenuBarGeometry.barExcludingClock(bar: bar, clock: CGRect(x: 1588, y: 500, width: 142, height: 33)) == nil)
+    t.check("a clock at the bar's left edge leaves nothing to cover",
+            MenuBarGeometry.barExcludingClock(bar: bar, clock: CGRect(x: 0, y: 1084, width: 142, height: 33)) == nil)
+    t.check("a clock wider than the bar leaves nothing to cover",
+            MenuBarGeometry.barExcludingClock(bar: bar, clock: CGRect(x: -10, y: 1084, width: 2000, height: 33)) == nil)
+    t.check("an empty clock rect produces no strip",
+            MenuBarGeometry.barExcludingClock(bar: bar, clock: .zero) == nil)
+    t.check("an empty bar produces no strip",
+            MenuBarGeometry.barExcludingClock(bar: .zero, clock: CGRect(x: 100, y: 0, width: 142, height: 33)) == nil)
+}
+
+do {
+    // The property the mode is named for: whatever the layout, the strip never
+    // reaches the clock and never leaves the bar.
+    var rng = SystemRandomNumberGenerator()
+    var covered = 0
+    var escaped = 0
+    var produced = 0
+    for _ in 0..<20_000 {
+        let barX = CGFloat(Int.random(in: -3000...3000, using: &rng))
+        let barW = CGFloat(Int.random(in: 800...5000, using: &rng))
+        let h = CGFloat(Int.random(in: 22...40, using: &rng))
+        let bar = CGRect(x: barX, y: CGFloat(Int.random(in: -2000...2000, using: &rng)), width: barW, height: h)
+        let clock = CGRect(x: CGFloat(Int.random(in: Int(barX - 200)...Int(barX + barW + 200), using: &rng)),
+                           y: bar.minY, width: CGFloat(Int.random(in: 40...160, using: &rng)), height: h)
+        guard let strip = MenuBarGeometry.barExcludingClock(bar: bar, clock: clock) else { continue }
+        produced += 1
+        if strip.maxX > clock.minX { covered += 1 }
+        if strip.minX < bar.minX || strip.maxX > bar.maxX || strip.minY != bar.minY || strip.height != bar.height { escaped += 1 }
+    }
+    t.check("the fuzz produced strips at all", produced > 10_000, "only \(produced) of 20,000")
+    t.equal("20,000 random layouts never cover the clock", covered, 0)
+    t.equal("20,000 random layouts never leave the bar", escaped, 0)
 }
 
 t.finish()

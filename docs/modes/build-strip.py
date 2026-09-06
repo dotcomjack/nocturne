@@ -1,8 +1,8 @@
 # █ dcj · dotcomjack.com · MIT
-# Builds the four-mode comparison image from the raw menu bar captures.
+# Builds the five-mode comparison image from the raw menu bar captures.
 #
-# Each row is the SAME strip of the real menu bar, in one of Nocturne's four
-# modes, captured on macOS 26.3.1 at 2x. Only the right-hand portion is kept:
+# Each row is the SAME strip of the real menu bar, in one of Nocturne's five
+# modes, captured on macOS 26.6.2 at 2x. Only the right-hand portion is kept:
 # the left of the bar is app menus and carries no information about the clock.
 #
 # Deliberately no drop shadows or device frames. The thing being demonstrated
@@ -24,6 +24,7 @@ ROWS = [
     ("mode-2-blind.png",         "Blind",         "analog dial, 44pt"),
     ("mode-3-gone.png",          "Gone",          "patched over, experimental"),
     ("mode-4-hide-everything.png", "Hide everything", "whole bar, minus its own icon"),
+    ("mode-5-only-the-clock.png", "Only the clock", "whole bar, minus the clock"),
 ]
 
 

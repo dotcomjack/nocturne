@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # █ dcj · dotcomjack.com · MIT
 #
-# Builds and runs the Follow Focus tests.
+# Builds and runs the logic tests: Follow Focus, the mode table, and the Only
+# the clock geometry.
 #
 # Deliberately not an XCTest target. Everything under test is Foundation-only so
 # that it needs no host app and no run loop owned by AppKit, which keeps this to
@@ -16,6 +17,7 @@ echo "==> Building tests"
 swiftc -O \
   Sources/ClockMode.swift \
   Sources/FocusEngagement.swift \
+  Sources/MenuBarGeometry.swift \
   Tests/main.swift \
   -o "$OUT"
 

@@ -207,6 +207,11 @@ final class NocturneController: ObservableObject {
     /// Deliberately does **not** write Clock Options. Those are only written when
     /// the user moves one of our switches. Writing them here would silently
     /// revert any change the user made in System Settings, on every launch.
+    ///
+    /// The analog key is written in BOTH directions here, not only on. Only the
+    /// clock is the one covering mode that wants a digital clock, so arriving
+    /// there from Blind has to put the readout back before the strip goes up,
+    /// and that path waits for Control Center exactly as the analog swap does.
     func apply() {
         applyGeneration &+= 1
         let generation = applyGeneration
@@ -219,12 +224,12 @@ final class NocturneController: ObservableObject {
             ControlCenter.reload()
         }
 
-        guard mode.usesOverlay else {
+        guard let coverage = mode.coverage else {
             overlay.deactivate()
             return
         }
 
-        overlay.coverage = (mode == .naked) ? .entireBar : .clock
+        overlay.coverage = coverage
 
         if alreadyCorrect {
             overlay.activate()
