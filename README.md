@@ -370,6 +370,7 @@ That is the entire undo, and it needs no app installed to work.
 - It does not cover a display whose current Space is a full-screen app unless the menu bar is set to stay visible there. With the default setting the bar slides away in full screen and there is nothing to cover, so the strip stays out of that Space on purpose and never floats over a video. Set the bar to stay (Never, or On Desktop Only) and that display is covered like any other, measured with Safari full screen on an external panel.
 - It does not use private APIs, so it will not break on a macOS update.
 - It does not ask for Accessibility or Screen Recording.
+- It does not keep working while nobody can see the screen, and it barely works while you can: 0.04% CPU and about one wakeup a second at rest, measured. See the changelog for how.
 - It does not phone home, and there is nothing to phone home about.
 
 ## Why

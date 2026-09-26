@@ -38,6 +38,9 @@ final class MenuBarController: NSObject {
                 let appearance = self?.statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
                 return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             },
+            isVisible: { [weak self] in
+                self?.controller.overlay.coversStatusItem == false
+            },
             apply: { [weak self] image in
                 guard let self else { return }
                 self.statusItem.button?.image = image ?? self.restingImage

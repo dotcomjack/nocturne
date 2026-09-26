@@ -34,109 +34,131 @@ enum ClockWindowLocator {
     /// Tolerance when matching a window's top edge to a screen's top edge.
     private static let topEdgeSlop: CGFloat = 3
 
-    /// Control Center's menu bar windows, bucketed by which screen's bar they
-    /// are sitting in. Bucketing matters on a multi display setup, where two
-    /// bars are present at once.
-    private static func itemsByScreen() -> [Int: [CGRect]] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return [:]
+    /// One read of the window list, and everything a placement pass needs
+    /// from it.
+    ///
+    /// `CGWindowListCopyWindowInfo` is a round trip to the window server and
+    /// the only expensive thing the tracker does: 0.45ms per call, measured on
+    /// 26.6.2. The 1.4.1 tracker made four of them every 2s in Only the clock
+    /// with Hover to show (the strip, the beacon check twice, the hover bands),
+    /// all describing the same instant. Taking one snapshot and asking it every
+    /// question makes that one, and it also means the strip, the beacon and
+    /// the hover bands can never disagree about a bar that reflowed between
+    /// two reads.
+    struct Snapshot {
+
+        /// Control Center's menu bar items, Quartz coordinates, bucketed by
+        /// the index of the screen whose bar they sit in.
+        fileprivate let itemsByScreen: [Int: [CGRect]]
+
+        /// Every Control Center window, unfiltered, for `hasMenuBarItem`.
+        fileprivate let ownWindows: [CGRect]
+
+        fileprivate let screens: [NSScreen]
+
+        /// Reads the window list once.
+        ///
+        /// Walked as `NSArray` and `NSDictionary` rather than bridged to
+        /// `[[String: Any]]`, which would copy every key of every window on the
+        /// system into Swift only to throw all but two away.
+        static func current() -> Snapshot {
+            let screens = NSScreen.screens
+            let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+            guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as NSArray? else {
+                return Snapshot(itemsByScreen: [:], ownWindows: [], screens: screens)
+            }
+
+            var byScreen: [Int: [CGRect]] = [:]
+            var own: [CGRect] = []
+            for case let window as NSDictionary in raw {
+                guard window[kCGWindowOwnerName] as? String == ownerName,
+                      let boundsValue = window[kCGWindowBounds] as? NSDictionary,
+                      let rect = CGRect(dictionaryRepresentation: boundsValue)
+                else { continue }
+
+                own.append(rect)
+
+                guard rect.height > 0, rect.height <= maxMenuBarItemHeight,
+                      let screenIndex = menuBarIndex(containing: rect, screens: screens)
+                else { continue }
+                byScreen[screenIndex, default: []].append(rect)
+            }
+            return Snapshot(itemsByScreen: byScreen, ownWindows: own, screens: screens)
         }
 
-        var byScreen: [Int: [CGRect]] = [:]
-        for window in raw {
-            guard window[kCGWindowOwnerName as String] as? String == ownerName,
-                  let boundsValue = window[kCGWindowBounds as String] as? NSDictionary,
-                  let rect = CGRect(dictionaryRepresentation: boundsValue),
-                  rect.height > 0, rect.height <= maxMenuBarItemHeight,
-                  let screenIndex = menuBarIndex(containing: rect)
-            else { continue }
+        /// Whether a real menu bar item is drawn at this Cocoa rect.
+        ///
+        /// AppKit keeps reporting a plausible on-bar frame for a status item
+        /// macOS has dropped for menu bar overflow, so `NSStatusItem` cannot be
+        /// trusted about its own position. The window list can: every status
+        /// item, ours included, is hosted by Control Center as a real window,
+        /// and if no such window exists at that rect then nothing is drawn
+        /// there.
+        ///
+        /// Geometry only, so no Screen Recording permission is involved.
+        func hasMenuBarItem(at cocoaRect: CGRect) -> Bool {
+            guard let primary = screens.first else { return false }
+            let quartzY = primary.frame.maxY - cocoaRect.origin.y - cocoaRect.height
 
-            byScreen[screenIndex, default: []].append(rect)
+            return ownWindows.contains { rect in
+                abs(rect.minX - cocoaRect.minX) <= 2
+                    && abs(rect.minY - quartzY) <= 2
+                    && abs(rect.width - cocoaRect.width) <= 2
+            }
         }
-        return byScreen
+
+        /// Clock rects in Cocoa screen coordinates, one per menu bar, ready to
+        /// hand to `NSWindow`.
+        func clockRects() -> [CGRect] {
+            itemsByScreen.values
+                .compactMap { $0.max(by: { $0.maxX < $1.maxX }) }
+                .map { cocoaRect(fromQuartz: $0, screens: screens) }
+        }
+
+        /// The full menu bar strip, but only on screens that currently *have* a
+        /// menu bar showing.
+        ///
+        /// The geometry itself comes from `NSScreen`, because the Window
+        /// Server's own menu bar window is identified by its name and the name
+        /// field is the TCC-gated one. But `NSScreen` always reports every
+        /// screen, whether or not a bar is drawn on it. Deriving the rects from
+        /// `NSScreen` alone therefore never returns empty, the caller's teardown
+        /// guard never fires, and the strip stays put in full screen: a solid
+        /// band across the top of whatever video you are watching.
+        ///
+        /// So gate on the same signal the clock path uses. If Control Center is
+        /// not drawing items into a screen's bar, that bar is hidden, and there
+        /// is nothing there to cover.
+        func menuBarRects() -> [CGRect] {
+            itemsByScreen.compactMap { index, itemRects in
+                guard index < screens.count else { return nil }
+                return barRect(for: screens[index], items: itemRects)
+            }
+        }
+
+        /// The menu bar minus its clock, one strip per bar, for Only the clock.
+        ///
+        /// Same gate as `menuBarRects()`: a screen Control Center is not
+        /// drawing into has no bar showing, so it gets no strip. And the clock
+        /// is the same right-most item `clockRects()` returns, so the two can
+        /// never disagree about where it is. The arithmetic lives in
+        /// `MenuBarGeometry` where it can be tested without a window server.
+        func menuBarRectsExcludingClock() -> [CGRect] {
+            itemsByScreen.compactMap { index, itemRects in
+                guard index < screens.count,
+                      let clock = itemRects.max(by: { $0.maxX < $1.maxX })
+                else { return nil }
+                return MenuBarGeometry.barExcludingClock(
+                    bar: barRect(for: screens[index], items: itemRects),
+                    clock: cocoaRect(fromQuartz: clock, screens: screens))
+            }
+        }
     }
 
-    /// Whether a real menu bar item is drawn at this Cocoa rect.
-    ///
-    /// AppKit keeps reporting a plausible on-bar frame for a status item macOS
-    /// has dropped for menu bar overflow, so `NSStatusItem` cannot be trusted
-    /// about its own position. The window list can: every status item, ours
-    /// included, is hosted by Control Center as a real window, and if no such
-    /// window exists at that rect then nothing is drawn there.
-    ///
-    /// Geometry only, so no Screen Recording permission is involved.
-    static func hasMenuBarItem(at cocoaRect: CGRect) -> Bool {
-        guard let primary = NSScreen.screens.first else { return false }
-        let quartzY = primary.frame.maxY - cocoaRect.origin.y - cocoaRect.height
-
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return false
-        }
-
-        return raw.contains { window in
-            guard window[kCGWindowOwnerName as String] as? String == ownerName,
-                  let boundsValue = window[kCGWindowBounds as String] as? NSDictionary,
-                  let rect = CGRect(dictionaryRepresentation: boundsValue)
-            else { return false }
-
-            return abs(rect.minX - cocoaRect.minX) <= 2
-                && abs(rect.minY - quartzY) <= 2
-                && abs(rect.width - cocoaRect.width) <= 2
-        }
-    }
-
-    /// Clock rects in Cocoa screen coordinates, one per menu bar, ready to hand
-    /// to `NSWindow`.
+    /// Clock rects from a fresh read. For callers that ask one question once,
+    /// such as the settle wait after a Control Center restart.
     static func rects() -> [CGRect] {
-        itemsByScreen().values
-            .compactMap { $0.max(by: { $0.maxX < $1.maxX }) }
-            .map(cocoaRect(fromQuartz:))
-    }
-
-    /// The full menu bar strip, but only on screens that currently *have* a
-    /// menu bar showing.
-    ///
-    /// The geometry itself comes from `NSScreen`, because the Window Server's
-    /// own menu bar window is identified by its name and the name field is the
-    /// TCC-gated one. But `NSScreen` always reports every screen, whether or not
-    /// a bar is drawn on it. Deriving the rects from `NSScreen` alone therefore
-    /// never returns empty, the caller's teardown guard never fires, and the
-    /// strip stays put in full screen: a solid band across the top of whatever
-    /// video you are watching.
-    ///
-    /// So gate on the same signal the clock path uses. If Control Center is not
-    /// drawing items into a screen's bar, that bar is hidden, and there is
-    /// nothing there to cover.
-    static func menuBarRects() -> [CGRect] {
-        let items = itemsByScreen()
-        let screens = NSScreen.screens
-
-        return items.compactMap { index, itemRects in
-            guard index < screens.count else { return nil }
-            return barRect(for: screens[index], items: itemRects)
-        }
-    }
-
-    /// The menu bar minus its clock, one strip per bar, for Only the clock.
-    ///
-    /// Same gate as `menuBarRects()`: a screen Control Center is not drawing
-    /// into has no bar showing, so it gets no strip. And the clock is the same
-    /// right-most item `rects()` returns, so the two can never disagree about
-    /// where it is. The arithmetic lives in `MenuBarGeometry` where it can be
-    /// tested without a window server.
-    static func menuBarRectsExcludingClock() -> [CGRect] {
-        let items = itemsByScreen()
-        let screens = NSScreen.screens
-
-        return items.compactMap { index, itemRects in
-            guard index < screens.count,
-                  let clock = itemRects.max(by: { $0.maxX < $1.maxX })
-            else { return nil }
-            return MenuBarGeometry.barExcludingClock(bar: barRect(for: screens[index], items: itemRects),
-                                                     clock: cocoaRect(fromQuartz: clock))
-        }
+        Snapshot.current().clockRects()
     }
 
     /// The full strip of a screen's menu bar, in Cocoa coordinates.
@@ -178,10 +200,12 @@ enum ClockWindowLocator {
     ///
     /// A menu bar item's top edge is flush with the top edge of its screen. That
     /// is what separates a status item from Control Center's own popover panel,
-    /// which is also owned by "Control Center" but hangs below the bar.
-    private static func menuBarIndex(containing rect: CGRect) -> Int? {
-        for (index, screen) in NSScreen.screens.enumerated() {
-            let quartzTop = quartzTopEdge(of: screen)
+    /// which is also owned by "Control Center" but hangs below the bar. The top
+    /// edge is compared in Quartz (top-left origin) coordinates.
+    private static func menuBarIndex(containing rect: CGRect, screens: [NSScreen]) -> Int? {
+        guard let primary = screens.first else { return nil }
+        for (index, screen) in screens.enumerated() {
+            let quartzTop = primary.frame.maxY - screen.frame.maxY
             guard abs(rect.minY - quartzTop) <= topEdgeSlop else { continue }
             guard rect.midX >= screen.frame.minX, rect.midX <= screen.frame.maxX else { continue }
             return index
@@ -189,18 +213,12 @@ enum ClockWindowLocator {
         return nil
     }
 
-    /// A screen's top edge expressed in Quartz (top-left origin) coordinates.
-    private static func quartzTopEdge(of screen: NSScreen) -> CGFloat {
-        guard let primary = NSScreen.screens.first else { return 0 }
-        return primary.frame.maxY - screen.frame.maxY
-    }
-
     /// Quartz window bounds use a top-left origin anchored to the primary
     /// display. Cocoa uses bottom-left. Flipping against the primary screen's
     /// height is the conversion, and it has to be the *primary* screen even when
     /// the clock lives on a secondary one.
-    private static func cocoaRect(fromQuartz rect: CGRect) -> CGRect {
-        guard let primary = NSScreen.screens.first else { return rect }
+    private static func cocoaRect(fromQuartz rect: CGRect, screens: [NSScreen]) -> CGRect {
+        guard let primary = screens.first else { return rect }
         let flippedY = primary.frame.maxY - rect.origin.y - rect.height
         return CGRect(x: rect.origin.x, y: flippedY, width: rect.width, height: rect.height)
     }

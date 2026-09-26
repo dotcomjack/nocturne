@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // First, so everything built below starts out knowing whether anyone
+        // can see the screen.
+        Presence.start()
         menuBar = MenuBarController()
         installSignalHandlers()
 
