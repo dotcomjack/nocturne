@@ -24,7 +24,7 @@ Focus anywhere in your ecosystem, from your iPhone, from the Watch, from Control
 Center, and your Mac's menu bar goes with it. Turn the Focus off and it comes
 back exactly as it was.
 
-![The macOS menu bar with a normal clock reading Sat Aug 8 3:14 AM, and below it the same menu bar with the clock replaced by a small analog dial](docs/clock-before-after.png)
+![The macOS menu bar with a normal clock reading Sat Aug 8 3:14 AM, below it the same menu bar with the clock replaced by a small analog dial, and below that the same bar blank except for Nocturne's moon and the clock](docs/clock-before-after.png)
 
 macOS 14 or later. No permissions. No private APIs. No account. And nothing to
 notice in Activity Monitor: 0.04% CPU and about one wakeup a second at rest,
