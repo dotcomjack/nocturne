@@ -431,6 +431,55 @@ do {
     t.equal("release never invents a mode the user was not already on", invented, 0)
 }
 
+do {
+    // The backstop poll only runs while `needsBackstop` holds, so a "Focus
+    // ended" that macOS fails to deliver outside that window is never caught.
+    // That is only safe if such a release would have done nothing. Prove it
+    // over every reachable state rather than trusting the three-line
+    // argument in the doc comment, and prove the converse too: inside the
+    // window a release always matters, so the poll is not running for nothing.
+    var e = FocusEngagement()
+    var mode = ClockMode.blind
+    var rng = SystemRandomNumberGenerator()
+    var missedReleaseMattered = 0
+    var pollWasUseless = 0
+    var outside = 0
+    for _ in 0..<50_000 {
+        switch Int.random(in: 0..<6, using: &rng) {
+        case 0:
+            let target = ClockMode.focusTargets.randomElement(using: &rng)!
+            if let n = e.engage(currentMode: mode, target: target) { mode = n }
+        case 1:
+            if let n = e.release(currentMode: mode) { mode = n }
+        case 2:
+            let target = ClockMode.focusTargets.randomElement(using: &rng)!
+            if let n = e.retarget(currentMode: mode, to: target) { mode = n }
+        case 3:
+            e.abandon()
+        case 4:
+            mode = ClockMode.allCases.randomElement(using: &rng)!
+        default:
+            e = roundTrip(e)
+        }
+
+        // What a release delivered right now would do, from any mode on screen.
+        for onScreen in ClockMode.allCases {
+            var probe = e
+            let next = probe.release(currentMode: onScreen)
+            let changed = next != nil || probe != e
+            if e.needsBackstop {
+                if !changed { pollWasUseless += 1 }
+            } else {
+                outside += 1
+                if changed { missedReleaseMattered += 1 }
+            }
+        }
+    }
+    t.check("the walk spent time outside the backstop window", outside > 10_000, "only \(outside)")
+    t.equal("outside the backstop window a missed release changes nothing", missedReleaseMattered, 0)
+    t.equal("inside the backstop window a release always changes the state", pollWasUseless, 0)
+}
+
 // MARK: - 9. Only the clock: the strip that stops at the clock
 //
 // Pure arithmetic on two rects, pulled out of the locator so it can be checked

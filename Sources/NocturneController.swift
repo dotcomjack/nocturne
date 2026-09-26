@@ -356,10 +356,19 @@ final class NocturneController: ObservableObject {
     /// analog clock before installing Nocturne gets a digital one back.
     func restoreSystemClock() {
         overlay.deactivate()
+
+        // Nothing to undo, so do not restart Control Center. In Only the clock
+        // and Clock visible the clock is already digital, and 1.4.1 killed
+        // Control Center on every quit and every logout regardless: a blank
+        // menu bar and a process relaunch for a value that was already right.
+        // Same test `apply()` uses to skip its own restart.
+        let target = originalClock?.isAnalog ?? false
+        guard ClockDefaults.bool(.isAnalog, fallback: false) != target else { return }
+
         // Confirmed rather than fire-and-forget: this runs on the quit path,
         // where the process is about to exit and a lost write means the user is
         // left with an analog clock and no app to undo it.
-        ClockDefaults.setAndConfirm(.isAnalog, originalClock?.isAnalog ?? false)
+        ClockDefaults.setAndConfirm(.isAnalog, target)
         ControlCenter.reload()
     }
 
@@ -448,12 +457,31 @@ final class NocturneController: ObservableObject {
     /// Focus can show the saved mode for one frame before correcting.
     func beginFocusWatch() {
         FocusFilterBridge.refresh()
+        updateFocusSweep()
+    }
 
-        focusSweep?.invalidate()
-        focusSweep = Timer.scheduledTimer(withTimeInterval: FocusFilterBridge.sweepInterval,
-                                          repeats: true) { _ in
+    /// Runs the backstop poll only while a missed delivery could matter.
+    ///
+    /// Each poll is a round trip to the system's intents machinery, so it
+    /// wakes another process as well as this one. 1.4.1 made it every 30s for
+    /// the life of the app, including for everyone who never added the filter
+    /// and so could never be helped by it. It is only worth anything while
+    /// `FocusEngagement.needsBackstop` holds; the rest of the time the push
+    /// path, launch, wake, screen wake and unlock between them cover every
+    /// way a Focus can start.
+    private func updateFocusSweep() {
+        guard focusEngagement.needsBackstop else {
+            focusSweep?.invalidate()
+            focusSweep = nil
+            return
+        }
+        guard focusSweep == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: FocusFilterBridge.sweepInterval,
+                                         repeats: true) { _ in
             FocusFilterBridge.refresh()
         }
+        timer.tolerance = FocusFilterBridge.sweepInterval / 6
+        focusSweep = timer
     }
 
     /// Re-read the filter after the machine has been away. For wake and unlock,
@@ -492,6 +520,7 @@ final class NocturneController: ObservableObject {
         // called by the backstop sweep every 30 seconds for the life of the
         // app, including for users who never configured the filter at all.
         if engagement != focusEngagement { focusEngagement = engagement }
+        updateFocusSweep()
 
         if let next { setModeFromFocus(next) }
     }
@@ -501,6 +530,7 @@ final class NocturneController: ObservableObject {
         var engagement = focusEngagement
         engagement.abandon()
         focusEngagement = engagement
+        updateFocusSweep()
     }
 
     private func setModeFromFocus(_ newMode: ClockMode) {

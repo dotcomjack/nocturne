@@ -141,11 +141,12 @@ struct NocturneFocusFilter: SetFocusFilterIntent {
 ///
 /// `refresh()` handles both by asking the system directly. The periodic sweep
 /// is a backstop rather than the mechanism: measured, a `current` read costs
-/// 1ms to 11ms, so once every 30 seconds is not worth optimising away for the
-/// certainty it buys.
+/// 1ms to 11ms. It runs only while a missed delivery would leave something
+/// wrong, see `FocusEngagement.needsBackstop`.
 enum FocusFilterBridge {
 
-    /// Backstop cadence. Not the mechanism, see the type comment.
+    /// Backstop cadence, while one is needed. Not the mechanism, see the type
+    /// comment.
     static let sweepInterval: TimeInterval = 30
 
     /// Push the live filter state into the controller.

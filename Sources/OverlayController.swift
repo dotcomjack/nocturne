@@ -149,6 +149,21 @@ final class OverlayController {
     private var hoverBands: [CGRect] = []
     private var hoverMonitor: Any?
 
+    /// Set while the hover monitor is napping. See `pointerMoved()`.
+    private var hoverRearm: DispatchWorkItem?
+
+    /// How long the hover monitor sleeps after a move that is nowhere near a
+    /// bar. The ceiling on how late the strip can drop when the pointer
+    /// arrives, and the reason moving the pointer around the desktop costs a
+    /// few wakeups a second rather than one per event.
+    private static let hoverNap: TimeInterval = 0.15
+
+    /// The placement tick. Two seconds is invisible to the user, and the
+    /// tolerance lets the system fold the wakeup into one it was making anyway
+    /// rather than waking the CPU on the dot.
+    private static let trackerInterval: TimeInterval = 2.0
+    private static let trackerTolerance: TimeInterval = 0.5
+
     /// The bar the pointer is on, if any. Held as the band rather than a plain
     /// flag so that on a multi display setup only that screen's strip drops:
     /// hovering the laptop should not uncover the clock on the external panel.
@@ -168,13 +183,6 @@ final class OverlayController {
         guard !isActive else { sync(); return }
         isActive = true
 
-        // The menu bar reflows on its own schedule, so poll rather than trust a
-        // single placement. Two seconds is invisible to the user and costs a
-        // window-list read, which is cheap.
-        tracker = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sync() }
-        }
-
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screensChanged),
@@ -192,7 +200,13 @@ final class OverlayController {
             name: Notification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil)
 
-        startHoverMonitor()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(presenceChanged),
+            name: Presence.didChange,
+            object: nil)
+
+        resumeRecurringWork()
         sync()
     }
 
@@ -200,19 +214,51 @@ final class OverlayController {
         guard isActive else { return }
         isActive = false
 
-        stopHoverMonitor()
-        tracker?.invalidate()
-        tracker = nil
-        NotificationCenter.default.removeObserver(
-            self,
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil)
+        pauseRecurringWork()
+        NotificationCenter.default.removeObserver(self)
         DistributedNotificationCenter.default.removeObserver(self)
 
         teardown()
     }
 
     @objc private func screensChanged() { sync() }
+
+    /// Stop polling while nobody can see a screen, and catch up at once when
+    /// someone can. The windows stay where they are either way, so the bar is
+    /// covered the moment the displays wake, and the catch-up `sync()` fixes
+    /// anything that moved while they slept.
+    @objc private func presenceChanged() {
+        guard isActive else { return }
+        if Presence.isAway {
+            pauseRecurringWork()
+        } else {
+            resumeRecurringWork()
+            sync()
+        }
+    }
+
+    /// The menu bar reflows on its own schedule, so poll rather than trust a
+    /// single placement. Only while someone can see it.
+    private func resumeRecurringWork() {
+        guard isActive, !Presence.isAway else { return }
+        if tracker == nil {
+            let timer = Timer.scheduledTimer(withTimeInterval: Self.trackerInterval,
+                                             repeats: true) { [weak self] _ in
+                // Scheduled timers fire on the main run loop, so there is no
+                // need to pay for a Task hop to get back onto it.
+                MainActor.assumeIsolated { self?.sync() }
+            }
+            timer.tolerance = Self.trackerTolerance
+            tracker = timer
+        }
+        startHoverMonitor()
+    }
+
+    private func pauseRecurringWork() {
+        tracker?.invalidate()
+        tracker = nil
+        stopHoverMonitor()
+    }
 
     /// Rebuild rather than sync: the fill colour and the glyph tint are only
     /// computed when the views are constructed, so they have to be remade.
@@ -227,15 +273,19 @@ final class OverlayController {
     /// When the locator returns nothing the clock is genuinely not on screen,
     /// which is the normal state in full screen. Tearing the windows down there
     /// is what stops a stray strip floating over a video.
+    ///
+    /// One window list read per pass, however many questions the pass asks.
+    /// See `ClockWindowLocator.Snapshot`.
     private func sync() {
+        let snapshot = ClockWindowLocator.Snapshot.current()
         let rects: [CGRect]
         switch coverage {
         case .clock:
-            rects = ClockWindowLocator.rects()
+            rects = snapshot.clockRects()
         case .entireBar:
-            rects = ClockWindowLocator.menuBarRects()
+            rects = snapshot.menuBarRects()
         case .barExceptClock:
-            rects = ClockWindowLocator.menuBarRectsExcludingClock()
+            rects = snapshot.menuBarRectsExcludingClock()
         }
 
         guard !rects.isEmpty else {
@@ -256,7 +306,11 @@ final class OverlayController {
         // so the glyph has to be real. Checking it after placing meant the
         // windows were created and then torn down on the same pass, which on a
         // repeating 2s tracker is a strip that flashes on and off forever.
-        if coverage.blanksBar, !beaconIsReal {
+        //
+        // Asked once and handed on, where 1.4.1 asked twice per pass, and each
+        // asking was a window list read of its own.
+        let beaconSpec = coverage.blanksBar ? realBeacon(in: snapshot) : nil
+        if coverage.blanksBar, beaconSpec == nil {
             teardown()
             return
         }
@@ -275,13 +329,13 @@ final class OverlayController {
             window.orderFrontRegardless()
         }
 
-        syncBeacon()
+        syncBeacon(beaconSpec)
 
         // Last, because it only adjusts the alpha of what the lines above have
         // just built. This is also the safety net for the hover state: the
         // monitor is the fast path, but it cannot fire for a pointer that was
         // already sitting on the bar before the mode changed.
-        refreshHoverBands()
+        refreshHoverBands(snapshot)
         evaluatePeek()
     }
 
@@ -293,7 +347,7 @@ final class OverlayController {
     /// `.clock`: the patch there is a 44pt dial in the corner, and asking
     /// someone to land on it exactly would make the feature feel broken. Moving
     /// to the bar at all is the gesture.
-    private func refreshHoverBands() {
+    private func refreshHoverBands(_ snapshot: ClockWindowLocator.Snapshot? = nil) {
         guard hoverToShow else {
             hoverBands = []
             return
@@ -305,7 +359,7 @@ final class OverlayController {
         // clock, the one part not covered, still drop the strip beside it.
         hoverBands = (coverage == .entireBar)
             ? windows.map(\.frame)
-            : ClockWindowLocator.menuBarRects()
+            : (snapshot ?? .current()).menuBarRects()
     }
 
     /// Mouse-only global monitors need no permission, which is what makes this
@@ -319,15 +373,59 @@ final class OverlayController {
     /// short timer was the alternative and is strictly worse, because it wakes
     /// the CPU 20 times a second forever to notice a pointer that usually is
     /// not moving.
+    ///
+    /// A listen-only `CGEventTap` looks cheaper per event and is a trap of the
+    /// same family as `kCGWindowName`: from a terminal it works, and from an
+    /// ad-hoc signed `.app` launched with `open` it is created without error
+    /// and then delivers nothing, 0 events of 2,099 posted, because a tap needs
+    /// Input Monitoring even for the mouse. Measured on 26.6.2.
     private func startHoverMonitor() {
-        guard hoverToShow, isActive, hoverMonitor == nil else { return }
+        guard hoverToShow, isActive, !Presence.isAway,
+              hoverMonitor == nil, hoverRearm == nil
+        else { return }
         hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             // Global monitors are delivered on the main run loop.
-            MainActor.assumeIsolated { self?.evaluatePeek() }
+            MainActor.assumeIsolated { self?.pointerMoved() }
         }
     }
 
+    /// A pointer that is nowhere near a bar puts the monitor to sleep.
+    ///
+    /// Every move anywhere on any screen is delivered to a global monitor, and
+    /// each one costs this process a wakeup, a window server message and an
+    /// `NSEvent`, only to learn that the pointer is still over a document. The
+    /// only moves that matter are the ones that reach a bar or leave it. So
+    /// after a move off the bar the monitor is removed, and re-armed
+    /// `hoverNap` later with a direct look at where the pointer is now, which
+    /// catches a pointer that reached the bar and stopped while it slept.
+    /// While the pointer is on a bar the monitor stays armed, so leaving is
+    /// seen at once.
+    ///
+    /// Measured on 26.6.2 with 20s of 120Hz pointer movement: the always-on
+    /// monitor handled 2,233 events for 0.44s of CPU, the napping one handled
+    /// 128 for 0.08s. At rest both cost nothing, because nothing is delivered.
+    private func pointerMoved() {
+        evaluatePeek()
+        guard hoveredBand == nil else { return }
+
+        if let hoverMonitor { NSEvent.removeMonitor(hoverMonitor) }
+        hoverMonitor = nil
+
+        let rearm = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.hoverRearm = nil
+                self.startHoverMonitor()
+                self.evaluatePeek()
+            }
+        }
+        hoverRearm = rearm
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverNap, execute: rearm)
+    }
+
     private func stopHoverMonitor() {
+        hoverRearm?.cancel()
+        hoverRearm = nil
         if let hoverMonitor { NSEvent.removeMonitor(hoverMonitor) }
         hoverMonitor = nil
         hoverBands = []
@@ -356,11 +454,18 @@ final class OverlayController {
     /// while the pointer was still resting on the bar.
     private func applyPeek() {
         for window in windows {
-            window.alphaValue = peekAlpha(for: window.frame)
+            Self.setAlpha(peekAlpha(for: window.frame), on: window)
         }
         if let beaconWindow {
-            beaconWindow.alphaValue = peekAlpha(for: beaconWindow.frame)
+            Self.setAlpha(peekAlpha(for: beaconWindow.frame), on: beaconWindow)
         }
+    }
+
+    /// Writes only a change. The tracker re-applies the peek state every pass,
+    /// and an unchanged alpha written to a window is still a trip to the
+    /// window server for nothing.
+    private static func setAlpha(_ alpha: CGFloat, on window: NSWindow) {
+        if window.alphaValue != alpha { window.alphaValue = alpha }
     }
 
     /// Transparent only for the bar the pointer is actually on.
@@ -377,6 +482,17 @@ final class OverlayController {
 
     // MARK: - Beacon
 
+    /// True while the strip is drawn over Nocturne's own status item, so the
+    /// only glyph anyone can see is the still one in the beacon window.
+    ///
+    /// The beacon exists exactly when a bar-blanking strip is up over a real
+    /// status item, and it is transparent exactly when the pointer has
+    /// uncovered that bar, so it answers the question directly.
+    var coversStatusItem: Bool {
+        guard let beaconWindow, beaconWindow.isVisible else { return false }
+        return beaconWindow.alphaValue > 0
+    }
+
     /// Whether our status item is genuinely drawn where AppKit claims it is.
     ///
     /// AppKit reports a plausible on-bar frame for a status item macOS has
@@ -390,9 +506,9 @@ final class OverlayController {
     /// strip spans the full screen width, so any frame in the bar's y-band
     /// intersects it, including x=57. This asks the window list whether an item
     /// is actually drawn there instead.
-    private var beaconIsReal: Bool {
-        guard let spec = beacon?() else { return false }
-        return ClockWindowLocator.hasMenuBarItem(at: spec.frame)
+    private func realBeacon(in snapshot: ClockWindowLocator.Snapshot) -> (frame: CGRect, symbol: String)? {
+        guard let spec = beacon?(), snapshot.hasMenuBarItem(at: spec.frame) else { return nil }
+        return spec
     }
 
     /// Redraws our own glyph above the strip so the way out stays visible.
@@ -400,8 +516,8 @@ final class OverlayController {
     /// Only for the coverages that blank the bar, `.entireBar` and
     /// `.barExceptClock`. In `.clock` coverage the bar is untouched and the
     /// real status item is already showing.
-    private func syncBeacon() {
-        guard coverage.blanksBar, !windows.isEmpty, let spec = beacon?(), beaconIsReal else {
+    private func syncBeacon(_ spec: (frame: CGRect, symbol: String)?) {
+        guard coverage.blanksBar, !windows.isEmpty, let spec else {
             beaconWindow?.orderOut(nil)
             beaconWindow = nil
             return
@@ -421,7 +537,7 @@ final class OverlayController {
         // which bar it belongs to here. Set every pass rather than only on
         // change: a beacon created while the pointer is already resting on the
         // bar would otherwise appear at full opacity over an uncovered bar.
-        window.alphaValue = peekAlpha(for: window.frame)
+        Self.setAlpha(peekAlpha(for: window.frame), on: window)
         if !window.isVisible {
             window.orderFrontRegardless()
         }

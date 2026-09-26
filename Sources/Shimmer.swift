@@ -91,15 +91,31 @@ final class ShimmerAnimator {
     private let restingImage: () -> NSImage?
     /// Whether the menu bar is currently dark.
     private let isDark: () -> Bool
+    /// Whether the icon can be seen at all right now.
+    private let isVisible: () -> Bool
 
     init(currentSymbol: @escaping () -> String?,
          restingImage: @escaping () -> NSImage?,
          isDark: @escaping () -> Bool,
+         isVisible: @escaping () -> Bool,
          apply: @escaping (NSImage?) -> Void) {
         self.currentSymbol = currentSymbol
         self.restingImage = restingImage
         self.isDark = isDark
+        self.isVisible = isVisible
         self.apply = apply
+
+        // Nobody is watching a menu bar on a sleeping display, and a sweep is
+        // 24 redraws of the status item.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(presenceChanged),
+            name: Presence.didChange,
+            object: nil)
+    }
+
+    @objc private func presenceChanged() {
+        if Presence.isAway { stop() } else { reschedule() }
     }
 
     // MARK: - Scheduling
@@ -116,10 +132,19 @@ final class ShimmerAnimator {
         scheduleTimer = nil
         stopSweep()
 
-        guard let interval = cadence.interval else { return }
+        guard let interval = cadence.interval, !Presence.isAway else { return }
 
         scheduleTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sweep() }
+            // Scheduled timers fire on the main run loop; no Task hop needed.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // A sweep nobody can see is 24 status item redraws for nothing.
+                // Hide everything and Only the clock put the strip over the
+                // real icon and draw a still copy of it on top, so there the
+                // sweep was always invisible, and in 1.4.1 it ran anyway.
+                guard self.isVisible() else { return }
+                self.sweep()
+            }
         }
         // A timer that only matters when it fires should not wake a sleeping
         // Mac to do it. The shimmer is decoration; the battery is not.
@@ -149,7 +174,7 @@ final class ShimmerAnimator {
 
         let interval = Self.duration / Double(frames.count)
         sweepTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 guard self.frameIndex < frames.count else {
                     self.stopSweep()

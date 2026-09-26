@@ -51,6 +51,16 @@ struct FocusEngagement: Equatable {
     /// to be what we actually applied, not what is configured now.
     var target: ClockMode?
 
+    /// Whether a lost "Focus ended" delivery would leave anything wrong.
+    ///
+    /// The controller polls the live filter as a backstop in case macOS drops
+    /// a `perform()`, and this is when that poll is worth its cost. Engaged, a
+    /// missed end leaves the menu bar hidden after the Focus is over.
+    /// Suppressed, it leaves the next Focus ignored. Neither, and `release` is
+    /// a no-op, so there is nothing a poll could catch: `Tests/main.swift`
+    /// proves that last part by fuzzing, rather than trusting this comment.
+    var needsBackstop: Bool { isEngaged || isSuppressed }
+
     /// A Focus started, or one was already running when we started looking.
     ///
     /// Idempotent, and it has to be. One continuous Focus can produce several

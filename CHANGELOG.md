@@ -5,6 +5,61 @@ Every release is on the [releases page](https://github.com/dotcomjack/nocturne/r
 with its full notes and a signed, notarized download. This file is the short
 version.
 
+## Unreleased
+
+### Lighter, measurably
+
+Nothing on screen changes. What changes is what Nocturne costs while it sits
+there. Measured on macOS 26.6.2 against the shipped 1.4.1, same machine, same
+settings (Only the clock, Hover to show on, shimmer Occasionally), each build
+at steady state:
+
+| | 1.4.1 | now |
+|---|---|---|
+| CPU at rest, input idle | 0.173% | 0.042% |
+| Wakeups at rest | 3.71/s | 1.00/s |
+| CPU while the pointer moves (120Hz) | 3.76% | 0.60% |
+
+"At rest" counts only the seconds in which there was no keyboard or pointer
+input at all, read from the HID idle timer, because a window with the owner
+using the Mac folds pointer events into the number and flatters nobody.
+
+Where it came from, largest first:
+
+- **The pointer.** Hover to show watched every mouse move on every screen, and
+  each one cost this process a wakeup to learn the pointer was still over a
+  document. The monitor now naps for 150ms after any move that is nowhere near
+  a bar, then looks once at where the pointer is. On a bar it stays awake, so
+  leaving is seen at once. A listen-only event tap looked cheaper and is a
+  trap: from an ad-hoc signed `.app` it is created without error and delivers
+  0 of 2,099 events, because it needs Input Monitoring even for the mouse.
+- **The placement tick** read the window list four times every 2s in Only the
+  clock with Hover to show, all describing the same instant. It reads it once,
+  lets the system fold the wakeup into one it was making anyway, and skips
+  alpha writes that change nothing.
+- **The shimmer** swept every 30s in Hide everything and Only the clock, where
+  the strip covers the real icon and the visible one is a still copy on top.
+  24 status item redraws per sweep, never seen. Those sweeps are skipped.
+- **Nobody watching, nothing running.** With the displays asleep or the session
+  switched away, the placement tick, the hover monitor and the shimmer stop,
+  and catch up the moment a display wakes. The strip stays in place
+  throughout. Screen lock is deliberately not a trigger: a missed "unlocked"
+  would leave everything paused over a visible bar.
+- **The Focus backstop** asked the system for the live Focus every 30s for the
+  life of the app, including for everyone who never added the filter. It now
+  runs only while a lost "Focus ended" would leave something wrong, and the
+  suite proves over 50,000 random operations that outside that window a lost
+  one changes nothing.
+- **Quitting** no longer restarts Control Center when the clock is already
+  digital, which in Only the clock and Clock visible it always is. That was a
+  blank menu bar and a process relaunch at every quit and every logout.
+
+### Tests
+
+106 checks, up from 103. The new ones pin the Focus backstop rule from both
+sides and were validated by mutation: three deliberate defects in the rule,
+all three caught.
+
 ## 1.4.1
 
 ### The full-screen display gets covered too
