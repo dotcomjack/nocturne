@@ -44,6 +44,11 @@ for x in range(row1.width):
 # The clock, exactly as it was in row 1.
 row3.paste(row1.crop((CLOCK_X[0], 0, CLOCK_X[1], ROW_H)), (CLOCK_X[0], 0))
 
+# The bar's bottom edge: rows 1 and 2 carry a soft fringe where the capture
+# meets the window below, so row 3 borrows row 1's last few pixel rows.
+EDGE = 3
+row3.paste(row1.crop((0, ROW_H - EDGE, row1.width, ROW_H)), (0, ROW_H - EDGE))
+
 # The moon: white glyph on a dark bar, alpha recovered from luminance.
 moon = Image.open(MOON_SRC).convert("RGB").crop(MOON_BOX)
 mp = moon.load()
