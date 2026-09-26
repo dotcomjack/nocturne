@@ -5,7 +5,7 @@ Every release is on the [releases page](https://github.com/dotcomjack/nocturne/r
 with its full notes and a signed, notarized download. This file is the short
 version.
 
-## Unreleased
+## 1.5.0
 
 ### Lighter, measurably
 
